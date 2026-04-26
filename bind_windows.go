@@ -437,6 +437,12 @@ retry:
 }
 
 func (bind *WinRingBind) receiveIPv4(bufs [][]byte, sizes []int, eps []Endpoint) (int, error) {
+	if bind.isOpen.Load() != 1 {
+		return 0, net.ErrClosed
+	}
+	if err := validateReceiveBuffers(bufs, sizes, eps, bind.BatchSize()); err != nil {
+		return 0, err
+	}
 	bind.mu.RLock()
 	defer bind.mu.RUnlock()
 	n, ep, err := bind.v4.Receive(bufs[0], &bind.isOpen)
@@ -446,6 +452,12 @@ func (bind *WinRingBind) receiveIPv4(bufs [][]byte, sizes []int, eps []Endpoint)
 }
 
 func (bind *WinRingBind) receiveIPv6(bufs [][]byte, sizes []int, eps []Endpoint) (int, error) {
+	if bind.isOpen.Load() != 1 {
+		return 0, net.ErrClosed
+	}
+	if err := validateReceiveBuffers(bufs, sizes, eps, bind.BatchSize()); err != nil {
+		return 0, err
+	}
 	bind.mu.RLock()
 	defer bind.mu.RUnlock()
 	n, ep, err := bind.v6.Receive(bufs[0], &bind.isOpen)

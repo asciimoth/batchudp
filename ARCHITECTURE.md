@@ -66,6 +66,9 @@ For `WinRingBind`:
 
 For `StdNetBind`, the receive path lives in `receiveIP` in`bind_std.go`:
 
+- Callers must pass `packets`, `sizes`, and `eps` slices whose lengths are at
+  least `BatchSize()`. Shorter slice lists are rejected with
+  `ErrReadBufferTooShort`.
 - Linux and Android use `ReadBatch` through `ipv4.PacketConn` / `ipv6.PacketConn`
   only when the opened connection unwraps to a suitable native `*net.UDPConn`.
 - Otherwise `gonnect.UDPConn.ReadMsgUDP` is used and packets are processed one
@@ -87,6 +90,9 @@ When Linux/Android RX offload is enabled:
 
 For `WinRingBind`:
 
+- `receiveIPv4` and `receiveIPv6` validate that the caller provided at least
+  `BatchSize()` entries in `packets`, `sizes`, and `eps`, returning
+  `ErrReadBufferTooShort` if not.
 - `receiveIPv4` and `receiveIPv6` call `afWinRingBind.Receive`.
 - `Receive` drains the completion queue, re-arms the receive request, copies the
   payload into the caller-provided buffer, and returns a `WinRingEndpoint`.

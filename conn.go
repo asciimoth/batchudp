@@ -22,9 +22,9 @@ const (
 // A ReceiveFunc receives at least one packet from the network and writes them
 // into packets. On a successful read it returns the number of elements of
 // sizes, packets, and endpoints that should be evaluated. Some elements of
-// sizes may be zero, and callers should ignore them. Callers must pass sizes
-// and eps slices with a length greater than or equal to the length of packets.
-// These lengths must not exceed the length of the associated Bind.BatchSize().
+// sizes may be zero, and callers should ignore them. Callers must pass
+// packets, sizes, and eps slices with a length greater than or equal to the
+// associated Bind.BatchSize().
 //
 // ReceiveFuncs returned by Bind.Open remain valid until the next Bind.Close.
 // They are expected to block waiting for input, may be called concurrently with
@@ -121,11 +121,32 @@ type Endpoint interface {
 	SrcIP() netip.Addr
 }
 
+type networkStateChecker interface {
+	IsUp() (bool, error)
+}
+
 var (
-	ErrBindAlreadyOpen   = errors.New("bind is already open")
-	ErrNoNetwork         = errors.New("bind network is nil")
-	ErrWrongEndpointType = errors.New("endpoint type does not correspond with bind type")
+	ErrBindAlreadyOpen    = errors.New("bind is already open")
+	ErrReadBufferTooShort = errors.New("receive buffers list shorter than bind batch size")
+	ErrNoNetwork          = errors.New("bind network is nil")
+	ErrWrongEndpointType  = errors.New("endpoint type does not correspond with bind type")
 )
+
+func validateReceiveBuffers(packets [][]byte, sizes []int, eps []Endpoint, batchSize int) error {
+	if len(packets) < batchSize || len(sizes) < batchSize || len(eps) < batchSize {
+		return ErrReadBufferTooShort
+	}
+	return nil
+}
+
+func networkDown(network any) bool {
+	checker, ok := network.(networkStateChecker)
+	if !ok {
+		return false
+	}
+	up, err := checker.IsUp()
+	return err == nil && !up
+}
 
 func (fn ReceiveFunc) PrettyName() string {
 	name := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()

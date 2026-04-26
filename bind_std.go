@@ -277,6 +277,9 @@ func (s *StdNetBind) receiveIP(
 	sizes []int,
 	eps []Endpoint,
 ) (n int, err error) {
+	if err := validateReceiveBuffers(bufs, sizes, eps, s.batchSize); err != nil {
+		return 0, err
+	}
 	msgs := s.getMessages()
 	for i := range bufs {
 		(*msgs)[i].Buffers[0] = bufs[i]
@@ -325,12 +328,30 @@ func (s *StdNetBind) receiveIP(
 
 func (s *StdNetBind) makeReceiveIPv4(pc batchReader, conn gonnect.UDPConn, rxOffload bool) ReceiveFunc {
 	return func(bufs [][]byte, sizes []int, eps []Endpoint) (n int, err error) {
+		if networkDown(s.network) {
+			return 0, net.ErrClosed
+		}
+		s.mu.Lock()
+		closed := s.ipv4 == nil
+		s.mu.Unlock()
+		if closed {
+			return 0, net.ErrClosed
+		}
 		return s.receiveIP(pc, conn, rxOffload, bufs, sizes, eps)
 	}
 }
 
 func (s *StdNetBind) makeReceiveIPv6(pc batchReader, conn gonnect.UDPConn, rxOffload bool) ReceiveFunc {
 	return func(bufs [][]byte, sizes []int, eps []Endpoint) (n int, err error) {
+		if networkDown(s.network) {
+			return 0, net.ErrClosed
+		}
+		s.mu.Lock()
+		closed := s.ipv6 == nil
+		s.mu.Unlock()
+		if closed {
+			return 0, net.ErrClosed
+		}
 		return s.receiveIP(pc, conn, rxOffload, bufs, sizes, eps)
 	}
 }

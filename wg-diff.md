@@ -12,3 +12,5 @@ Differences from the [wireguard-go/conn](https://github.com/WireGuard/wireguard-
   `StdNetBind`.
 - When `WinRingBind` is selected with `gonnect/native.Network`, it registers
   itself for external closer tracking so `Network.Down()` closes the bind.
+- Receive functions now return `ErrReadBufferTooShort` when the caller supplies
+  fewer than `BatchSize()` packet, size, or endpoint slots.

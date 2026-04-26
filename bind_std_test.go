@@ -30,6 +30,29 @@ func TestStdNetBindReceiveFuncAfterClose(t *testing.T) {
 	}
 }
 
+func TestStdNetBindReceiveFuncShortBufferList(t *testing.T) {
+	bind := NewStdNetBind((&native.Config{}).Build()).(*StdNetBind)
+	fns, _, err := bind.Open(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bind.Close()
+
+	shortLen := bind.BatchSize() - 1
+	bufs := make([][]byte, shortLen)
+	sizes := make([]int, shortLen)
+	eps := make([]Endpoint, shortLen)
+	for _, fn := range fns {
+		n, err := fn(bufs, sizes, eps)
+		if !errors.Is(err, ErrReadBufferTooShort) {
+			t.Fatalf("ReceiveFunc err = %v, want %v", err, ErrReadBufferTooShort)
+		}
+		if n != 0 {
+			t.Fatalf("ReceiveFunc n = %d, want 0", n)
+		}
+	}
+}
+
 func TestStdNetEndpointClearSrcRetainsBackingStorage(t *testing.T) {
 	ep := &StdNetEndpoint{
 		AddrPort: netip.MustParseAddrPort("127.0.0.1:1"),
