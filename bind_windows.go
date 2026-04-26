@@ -19,7 +19,7 @@ import (
 	"github.com/asciimoth/gonnect/sockopt"
 	"golang.org/x/sys/windows"
 
-	"golang.zx2c4.com/wireguard/conn/winrio"
+	"github.com/asciimoth/batchudp/winrio"
 )
 
 const (
