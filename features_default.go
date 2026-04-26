@@ -8,8 +8,8 @@
 
 package conn
 
-import "net"
+import "github.com/asciimoth/gonnect"
 
-func supportsUDPOffload(_ *net.UDPConn) (txOffload, rxOffload bool) {
+func supportsUDPOffload(_ gonnect.UDPConn) (txOffload, rxOffload bool) {
 	return
 }

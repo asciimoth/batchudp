@@ -1,6 +1,10 @@
+github.com/asciimoth/bufpool v0.3.0 h1:tQMop/kZ3eOLSorM9i0cqtOIpxWQUroGZ6oNk5DTnQc=
+github.com/asciimoth/bufpool v0.3.0/go.mod h1:JV6H4hpj2bCS5Svr0wNqR+XOZFOOkdXfNZxCjm/3QHw=
+github.com/asciimoth/gonnect v0.9.0 h1:He9TZIfWv8cg2dN2+LHy2sHJH6pduadZy8pb7ATlI98=
+github.com/asciimoth/gonnect v0.9.0/go.mod h1:XwXDVDjucVhOa/cifySEx+ij8veNKhtzUTnCdF1p+ug=
 golang.org/x/net v0.39.0 h1:ZCu7HMWDxpXpaiKdhzIfaltL9Lp31x/3fCP11bc6/fY=
 golang.org/x/net v0.39.0/go.mod h1:X7NRbYVEA+ewNkCNyJ513WmMdQ3BineSwVtN2zD/d+E=
-golang.org/x/sys v0.32.0 h1:s77OFDvIQeibCmezSnk/q6iAfkdiQaJi4VzroCFrN20=
-golang.org/x/sys v0.32.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+golang.org/x/sys v0.42.0 h1:omrd2nAlyT5ESRdCLYdm3+fMfNFE/+Rf4bDIQImRJeo=
+golang.org/x/sys v0.42.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb h1:whnFRlWMcXI9d+ZbWg+4sHnLp52d5yiIPUxMBSt4X9A=
 golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb/go.mod h1:rpwXGsirqLqN2L0JDJQlwOboGHmptD5ZD6T2VmcqhTw=

@@ -6,8 +6,10 @@
 package conn
 
 import (
-	"net"
 	"syscall"
+
+	"github.com/asciimoth/gonnect"
+	"github.com/asciimoth/gonnect/helpers"
 )
 
 // UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it is
@@ -22,17 +24,21 @@ const socketBufferSize = 7 << 20
 // bind.
 type controlFn func(network, address string, c syscall.RawConn) error
 
-// controlFns is a list of functions that are called from the listen config
-// that can apply socket options.
-var controlFns = []controlFn{}
+// listenControlFns are applied before bind through gonnect.ListenConfig when
+// the supplied Network supports it.
+var listenControlFns = []controlFn{}
 
-// listenConfig returns a net.ListenConfig that applies the controlFns to the
-// socket prior to bind. This is used to apply socket buffer sizing and packet
-// information OOB configuration for sticky sockets.
-func listenConfig() *net.ListenConfig {
-	return &net.ListenConfig{
+// socketOpenControlFns are applied after socket creation. Helpers should treat
+// unsupported raw-socket access as a no-op so virtual and wrapped networks can
+// still function.
+var socketOpenControlFns = []controlFn{}
+
+// listenConfig returns a gonnect.ListenConfig that applies listenControlFns to
+// the socket prior to bind.
+func listenConfig() *gonnect.ListenConfig {
+	return &gonnect.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
-			for _, fn := range controlFns {
+			for _, fn := range listenControlFns {
 				if err := fn(network, address, c); err != nil {
 					return err
 				}
@@ -40,4 +46,17 @@ func listenConfig() *net.ListenConfig {
 			return nil
 		},
 	}
+}
+
+func configureSocket(conn gonnect.UDPConn, network, address string) error {
+	rc, err := helpers.SyscallConn(conn)
+	if err != nil || rc == nil {
+		return err
+	}
+	for _, fn := range socketOpenControlFns {
+		if err := fn(network, address, rc); err != nil {
+			return err
+		}
+	}
+	return nil
 }

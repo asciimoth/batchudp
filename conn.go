@@ -123,6 +123,7 @@ type Endpoint interface {
 
 var (
 	ErrBindAlreadyOpen   = errors.New("bind is already open")
+	ErrNoNetwork         = errors.New("bind network is nil")
 	ErrWrongEndpointType = errors.New("endpoint type does not correspond with bind type")
 )
 

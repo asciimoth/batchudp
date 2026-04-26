@@ -7,4 +7,6 @@
 
 package conn
 
-func NewDefaultBind() Bind { return NewStdNetBind() }
+import "github.com/asciimoth/gonnect"
+
+func NewDefaultBind(network gonnect.Network) Bind { return NewStdNetBind(network) }

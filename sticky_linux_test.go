@@ -9,12 +9,12 @@ package conn
 
 import (
 	"context"
-	"net"
 	"net/netip"
 	"runtime"
 	"testing"
 	"unsafe"
 
+	"github.com/asciimoth/gonnect/native"
 	"golang.org/x/sys/unix"
 )
 
@@ -258,12 +258,15 @@ func Test_getSrcFromControl(t *testing.T) {
 
 func Test_listenConfig(t *testing.T) {
 	t.Run("IPv4", func(t *testing.T) {
-		conn, err := listenConfig().ListenPacket(context.Background(), "udp4", ":0")
+		conn, err := (&native.Config{}).Build().ListenUDP(context.Background(), "udp4", "0.0.0.0:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		sc, err := conn.(*net.UDPConn).SyscallConn()
+		if err := configureSocket(conn, "udp4", "0.0.0.0:0"); err != nil {
+			t.Fatal(err)
+		}
+		sc, err := unwrapUDPConn(conn).SyscallConn()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -284,11 +287,15 @@ func Test_listenConfig(t *testing.T) {
 		}
 	})
 	t.Run("IPv6", func(t *testing.T) {
-		conn, err := listenConfig().ListenPacket(context.Background(), "udp6", ":0")
+		conn, err := (&native.Config{}).Build().ListenUDPConfig(context.Background(), listenConfig(), "udp6", "[::]:0")
 		if err != nil {
 			t.Fatal(err)
 		}
-		sc, err := conn.(*net.UDPConn).SyscallConn()
+		defer conn.Close()
+		if err := configureSocket(conn, "udp6", "[::]:0"); err != nil {
+			t.Fatal(err)
+		}
+		sc, err := unwrapUDPConn(conn).SyscallConn()
 		if err != nil {
 			t.Fatal(err)
 		}

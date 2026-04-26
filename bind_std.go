@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/asciimoth/gonnect"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -31,10 +32,11 @@ var (
 // proposal in https://github.com/golang/go/issues/45886#issuecomment-1218301564.
 type StdNetBind struct {
 	mu            sync.Mutex // protects all fields except as specified
-	ipv4          *net.UDPConn
-	ipv6          *net.UDPConn
-	ipv4PC        *ipv4.PacketConn // will be nil on non-Linux
-	ipv6PC        *ipv6.PacketConn // will be nil on non-Linux
+	network       gonnect.Network
+	ipv4          gonnect.UDPConn
+	ipv6          gonnect.UDPConn
+	ipv4PC        batchReadWriter // will be nil when batch I/O is unavailable
+	ipv6PC        batchReadWriter // will be nil when batch I/O is unavailable
 	ipv4TxOffload bool
 	ipv4RxOffload bool
 	ipv6TxOffload bool
@@ -46,10 +48,17 @@ type StdNetBind struct {
 
 	blackhole4 bool
 	blackhole6 bool
+	batchSize  int
 }
 
-func NewStdNetBind() Bind {
+func NewStdNetBind(network gonnect.Network) Bind {
+	batchSize := 1
+	if network != nil && network.IsNative() && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
+		batchSize = IdealBatchSize
+	}
 	return &StdNetBind{
+		network:   network,
+		batchSize: batchSize,
 		udpAddrPool: sync.Pool{
 			New: func() any {
 				return &net.UDPAddr{
@@ -119,9 +128,37 @@ func (e *StdNetEndpoint) DstToString() string {
 	return e.AddrPort.String()
 }
 
-func listenNet(network string, port int) (*net.UDPConn, int, error) {
-	conn, err := listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
+func listenAddress(network string, port int) string {
+	switch network {
+	case "udp4":
+		return net.JoinHostPort("0.0.0.0", strconv.Itoa(port))
+	case "udp6":
+		return net.JoinHostPort("::", strconv.Itoa(port))
+	default:
+		return ":" + strconv.Itoa(port)
+	}
+}
+
+func (s *StdNetBind) listenNet(network string, port int) (gonnect.UDPConn, int, error) {
+	if s.network == nil {
+		return nil, 0, ErrNoNetwork
+	}
+
+	address := listenAddress(network, port)
+	var (
+		conn gonnect.UDPConn
+		err  error
+	)
+	if lcn, ok := s.network.(gonnect.ListenConfigNetwork); ok {
+		conn, err = lcn.ListenUDPConfig(context.Background(), listenConfig(), network, address)
+	} else {
+		conn, err = s.network.ListenUDP(context.Background(), network, address)
+	}
 	if err != nil {
+		return nil, 0, err
+	}
+	if err := configureSocket(conn, network, address); err != nil {
+		_ = conn.Close()
 		return nil, 0, err
 	}
 
@@ -132,9 +169,10 @@ func listenNet(network string, port int) (*net.UDPConn, int, error) {
 		laddr.String(),
 	)
 	if err != nil {
+		_ = conn.Close()
 		return nil, 0, err
 	}
-	return conn.(*net.UDPConn), uaddr.Port, nil
+	return conn, uaddr.Port, nil
 }
 
 func (s *StdNetBind) Open(uport uint16) ([]ReceiveFunc, uint16, error) {
@@ -152,31 +190,34 @@ func (s *StdNetBind) Open(uport uint16) ([]ReceiveFunc, uint16, error) {
 	// If uport is 0, we can retry on failure.
 again:
 	port := int(uport)
-	var v4conn, v6conn *net.UDPConn
-	var v4pc *ipv4.PacketConn
-	var v6pc *ipv6.PacketConn
+	var v4conn, v6conn gonnect.UDPConn
+	var v4pc, v6pc batchReadWriter
 
-	v4conn, port, err = listenNet("udp4", port)
+	v4conn, port, err = s.listenNet("udp4", port)
 	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
 		return nil, 0, err
 	}
 
 	// Listen on the same port as we're using for ipv4.
-	v6conn, port, err = listenNet("udp6", port)
+	v6conn, port, err = s.listenNet("udp6", port)
 	if uport == 0 && errors.Is(err, syscall.EADDRINUSE) && tries < 100 {
-		v4conn.Close()
+		if v4conn != nil {
+			_ = v4conn.Close()
+		}
 		tries++
 		goto again
 	}
 	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
-		v4conn.Close()
+		if v4conn != nil {
+			_ = v4conn.Close()
+		}
 		return nil, 0, err
 	}
 	var fns []ReceiveFunc
 	if v4conn != nil {
 		s.ipv4TxOffload, s.ipv4RxOffload = supportsUDPOffload(v4conn)
-		if runtime.GOOS == "linux" || runtime.GOOS == "android" {
-			v4pc = ipv4.NewPacketConn(v4conn)
+		if nativeConn := unwrapUDPConn(v4conn); nativeConn != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
+			v4pc = ipv4.NewPacketConn(nativeConn)
 			s.ipv4PC = v4pc
 		}
 		fns = append(fns, s.makeReceiveIPv4(v4pc, v4conn, s.ipv4RxOffload))
@@ -184,8 +225,8 @@ again:
 	}
 	if v6conn != nil {
 		s.ipv6TxOffload, s.ipv6RxOffload = supportsUDPOffload(v6conn)
-		if runtime.GOOS == "linux" || runtime.GOOS == "android" {
-			v6pc = ipv6.NewPacketConn(v6conn)
+		if nativeConn := unwrapUDPConn(v6conn); nativeConn != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
+			v6pc = ipv6.NewPacketConn(nativeConn)
 			s.ipv6PC = v6pc
 		}
 		fns = append(fns, s.makeReceiveIPv6(v6pc, v6conn, s.ipv6RxOffload))
@@ -223,9 +264,14 @@ type batchWriter interface {
 	WriteBatch([]ipv6.Message, int) (int, error)
 }
 
+type batchReadWriter interface {
+	batchReader
+	batchWriter
+}
+
 func (s *StdNetBind) receiveIP(
 	br batchReader,
-	conn *net.UDPConn,
+	conn gonnect.UDPConn,
 	rxOffload bool,
 	bufs [][]byte,
 	sizes []int,
@@ -238,7 +284,7 @@ func (s *StdNetBind) receiveIP(
 	}
 	defer s.putMessages(msgs)
 	var numMsgs int
-	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
+	if br != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
 		if rxOffload {
 			readAt := len(*msgs) - (IdealBatchSize / udpSegmentMaxDatagrams)
 			numMsgs, err = br.ReadBatch((*msgs)[readAt:], 0)
@@ -277,13 +323,13 @@ func (s *StdNetBind) receiveIP(
 	return numMsgs, nil
 }
 
-func (s *StdNetBind) makeReceiveIPv4(pc *ipv4.PacketConn, conn *net.UDPConn, rxOffload bool) ReceiveFunc {
+func (s *StdNetBind) makeReceiveIPv4(pc batchReader, conn gonnect.UDPConn, rxOffload bool) ReceiveFunc {
 	return func(bufs [][]byte, sizes []int, eps []Endpoint) (n int, err error) {
 		return s.receiveIP(pc, conn, rxOffload, bufs, sizes, eps)
 	}
 }
 
-func (s *StdNetBind) makeReceiveIPv6(pc *ipv6.PacketConn, conn *net.UDPConn, rxOffload bool) ReceiveFunc {
+func (s *StdNetBind) makeReceiveIPv6(pc batchReader, conn gonnect.UDPConn, rxOffload bool) ReceiveFunc {
 	return func(bufs [][]byte, sizes []int, eps []Endpoint) (n int, err error) {
 		return s.receiveIP(pc, conn, rxOffload, bufs, sizes, eps)
 	}
@@ -292,10 +338,7 @@ func (s *StdNetBind) makeReceiveIPv6(pc *ipv6.PacketConn, conn *net.UDPConn, rxO
 // TODO: When all Binds handle IdealBatchSize, remove this dynamic function and
 // rename the IdealBatchSize constant to BatchSize.
 func (s *StdNetBind) BatchSize() int {
-	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
-		return IdealBatchSize
-	}
-	return 1
+	return s.batchSize
 }
 
 func (s *StdNetBind) Close() error {
@@ -343,7 +386,7 @@ func (s *StdNetBind) Send(bufs [][]byte, endpoint Endpoint) error {
 	blackhole := s.blackhole4
 	conn := s.ipv4
 	offload := s.ipv4TxOffload
-	br := batchWriter(s.ipv4PC)
+	br := s.ipv4PC
 	is6 := false
 	if endpoint.DstIP().Is6() {
 		blackhole = s.blackhole6
@@ -409,13 +452,13 @@ retry:
 	return err
 }
 
-func (s *StdNetBind) send(conn *net.UDPConn, pc batchWriter, msgs []ipv6.Message) error {
+func (s *StdNetBind) send(conn gonnect.UDPConn, pc batchWriter, msgs []ipv6.Message) error {
 	var (
 		n     int
 		err   error
 		start int
 	)
-	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
+	if pc != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
 		for {
 			n, err = pc.WriteBatch(msgs[start:], 0)
 			if err != nil || n == len(msgs[start:]) {

@@ -43,7 +43,7 @@ func kernelVersion() (major, minor int) {
 }
 
 func init() {
-	controlFns = append(controlFns,
+	socketOpenControlFns = append(socketOpenControlFns,
 
 		// Attempt to set the socket buffer size beyond net.core.{r,w}mem_max by
 		// using SO_*BUFFORCE. This requires CAP_NET_ADMIN, and is allowed here to
@@ -75,11 +75,7 @@ func init() {
 				c.Control(func(fd uintptr) {
 					if runtime.GOOS != "android" {
 						err = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVPKTINFO, 1)
-						if err != nil {
-							return
-						}
 					}
-					err = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 1)
 				})
 			default:
 				err = fmt.Errorf("unhandled network: %s: %w", network, unix.EINVAL)
@@ -106,4 +102,15 @@ func init() {
 			return nil
 		},
 	)
+
+	listenControlFns = append(listenControlFns, func(network, address string, c syscall.RawConn) error {
+		if network != "udp6" {
+			return nil
+		}
+		var err error
+		c.Control(func(fd uintptr) {
+			err = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 1)
+		})
+		return err
+	})
 }

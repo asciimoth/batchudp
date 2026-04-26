@@ -14,17 +14,18 @@ The public contracts live in `conn.go`.
 The concrete implementations are:
 
 - `StdNetBind` in `bind_std.go`:
-  the default implementation on every non-Windows platform, and also the
-  Windows fallback when RIO is unavailable.
+  the gonnect-backed implementation used on every non-Windows platform and
+  also the Windows fallback when RIO is unavailable or the supplied network is
+  not suitable for RIO.
 - `WinRingBind` in `bind_windows.go`:
   the Windows-specific fast path using Registered I/O.
 
 `NewDefaultBind` selects the implementation:
 
-- `default.go`: non-Windows uses
-  `NewStdNetBind`.
-- `bind_windows.go`: Windows uses `NewWinRingBind`, which falls back to `StdNetBind` if `winrio`
-  initialization fails.
+- `default.go`: non-Windows uses `NewStdNetBind(network)`.
+- `bind_windows.go`: Windows uses `NewWinRingBind(network)` only when the
+  supplied network is native and unwraps to `gonnect/native.Network`; otherwise
+  it uses `StdNetBind(network)`.
 
 ## Main Data Flow
 
@@ -36,14 +37,19 @@ For `StdNetBind`:
 
 1. `Open` in `bind_std.go` locks the
    bind and rejects reopening with `ErrBindAlreadyOpen`.
-2. It calls `listenNet`, which builds sockets through `listenConfig()`.
-3. `listenConfig()` in `controlfns.go`
-   runs every function registered in the platform-specific `controlfns*.go`
-   files before `bind(2)`.
-4. `Open` creates one IPv4 socket and one IPv6 socket on the same port, probes
-   UDP offload support via `supportsUDPOffload`, and on Linux/Android wraps each
-   socket in `ipv4.PacketConn` or `ipv6.PacketConn` for batch I/O.
-5. `Open` returns one receive closure per active family:
+2. It calls `listenNet`, which builds sockets through the supplied
+   `gonnect.Network`.
+3. If that network implements `gonnect.ListenConfigNetwork`, `listenConfig()` in
+   `controlfns.go` applies bind-time socket controls such as `IPV6_V6ONLY`
+   before `bind(2)`.
+4. After open, `configureSocket()` applies the platform-specific post-open
+   control hooks such as buffer sizing, PKTINFO reception, and optional
+   `UDP_GRO`.
+5. `Open` creates one IPv4 socket and one IPv6 socket on the same port, probes
+   UDP offload support via `supportsUDPOffload`, and on Linux/Android wraps the
+   unwrapped underlying `*net.UDPConn` in `ipv4.PacketConn` or `ipv6.PacketConn`
+   only when native batch I/O is actually available.
+6. `Open` returns one receive closure per active family:
    `makeReceiveIPv4` and `makeReceiveIPv6`, both of which call `receiveIP`.
 
 For `WinRingBind`:
@@ -52,14 +58,18 @@ For `WinRingBind`:
 2. Each per-family bind allocates RX/TX rings, completion queues, and a RIO
    request queue.
 3. The bind preposts `packetsPerRing` receive requests for both families.
-4. `Open` returns two receive functions, `receiveIPv4` and `receiveIPv6`.
+4. If the supplied network unwraps to `gonnect/native.Network`, `Open`
+   registers the bind as an external closer so `Network.Down()` closes it.
+5. `Open` returns two receive functions, `receiveIPv4` and `receiveIPv6`.
 
 ### Receive
 
 For `StdNetBind`, the receive path lives in `receiveIP` in`bind_std.go`:
 
-- Linux and Android use `ReadBatch` through `ipv4.PacketConn` / `ipv6.PacketConn`.
-- Other platforms use `UDPConn.ReadMsgUDP` and process one datagram at a time.
+- Linux and Android use `ReadBatch` through `ipv4.PacketConn` / `ipv6.PacketConn`
+  only when the opened connection unwraps to a suitable native `*net.UDPConn`.
+- Otherwise `gonnect.UDPConn.ReadMsgUDP` is used and packets are processed one
+  datagram at a time.
 - Received control data is parsed by `getSrcFromControl`.
 - The returned `Endpoint` is a `StdNetEndpoint`, which holds destination
   address data plus optional cached source control data.
@@ -91,7 +101,7 @@ For `StdNetBind`, `Send` in `bind_std.go`:
 2. converts the destination `StdNetEndpoint` into a pooled `net.UDPAddr`,
 3. optionally attaches sticky source control data with `setSrcControl`,
 4. sends via `send`, using either `WriteBatch` on Linux/Android or
-   `WriteMsgUDP` elsewhere.
+   `gonnect.UDPConn.WriteMsgUDP` elsewhere.
 
 On Linux/Android TX offload:
 
@@ -109,12 +119,13 @@ and submits a `winrio.SendEx` request.
 
 ### Close
 
-For `StdNetBind`, `Close` closes the IPv4 and IPv6 sockets, clears cached
-packet-conn wrappers, blackhole flags, and offload state.
+For `StdNetBind`, `Close` closes the IPv4 and IPv6 gonnect UDP sockets, clears
+cached packet-conn wrappers, blackhole flags, and offload state.
 
 For `WinRingBind`, `Close` first flips `isOpen` so receive/send paths start
-returning `net.ErrClosed`, wakes any completion-queue waiters, and then tears
-down RIO queues, buffers, and sockets.
+returning `net.ErrClosed`, unregisters from gonnect lifecycle tracking when
+present, wakes any completion-queue waiters, and then tears down RIO queues,
+buffers, and sockets.
 
 ## Platform-Specific Logic
 
@@ -139,21 +150,25 @@ The repository uses Go build tags and `*_os.go` naming to isolate behavior:
 
 ### How platform hooks are called
 
-There are three main hook points:
+There are four main hook points:
 
 1. Socket creation:
-   `StdNetBind.Open -> listenNet -> listenConfig -> controlFns`.
-   This is where buffer sizes, `IPV6_V6ONLY`, PKTINFO reception, and `UDP_GRO`
-   are configured.
-2. Receive path:
+   `StdNetBind.Open -> listenNet -> gonnect.Network`.
+   If `gonnect.ListenConfigNetwork` is available, `listenConfig()` applies the
+   bind-time controls first.
+2. Post-open socket configuration:
+   `StdNetBind.Open -> configureSocket -> socketOpenControlFns`.
+   This is where buffer sizes, PKTINFO reception, and `UDP_GRO` are configured
+   when raw-socket access exists.
+3. Receive path:
    `StdNetBind.receiveIP` calls `getSrcFromControl` and, on Linux/Android,
    `splitCoalescedMessages`.
-3. Send path:
+4. Send path:
    `StdNetBind.Send` calls `setSrcControl` and, on Linux/Android with TX
    offload, `coalesceMessages` plus `setGSOSize`.
 
-Windows RIO bypasses `listenConfig` entirely because it creates sockets and I/O
-queues directly in `bind_windows.go`.
+Windows RIO bypasses gonnect socket creation entirely because it creates sockets
+and I/O queues directly in `bind_windows.go`.
 
 ## Sticky Sockets
 
@@ -162,8 +177,8 @@ to send the reply from the same local address/interface later.
 
 On Linux:
 
-- `controlfns_linux.go` enables `IP_PKTINFO` for IPv4 and `IPV6_RECVPKTINFO`
-  for IPv6 during socket creation.
+- `configureSocket` plus `controlfns_linux.go` enables `IP_PKTINFO` for IPv4
+  and `IPV6_RECVPKTINFO` for IPv6 when raw socket access is available.
 - `getSrcFromControl` in `sticky_linux.go` copies the PKTINFO control message
   into `StdNetEndpoint.src` during receive.
 - `setSrcControl` writes the cached control message back onto outgoing packets
@@ -194,7 +209,7 @@ sticky-socket feature set.
 
 Typical Android integration pattern:
 
-1. create the bind with `NewDefaultBind()` or `NewStdNetBind()`,
+1. create the bind with `NewDefaultBind(network)` or `NewStdNetBind(network)`,
 2. call `Open`,
 3. type-assert the bind to `PeekLookAtSocketFd`,
 4. fetch the IPv4 and/or IPv6 fd,
@@ -220,6 +235,9 @@ The implementation behavior behind that contract is:
   and flags, so sends can proceed concurrently with each other and with
   receives. A concurrent `Close` may cause an in-flight send to fail because the
   underlying socket was closed, but it should not corrupt bind state.
+- When the supplied network is `gonnect/native.Network`, `Network.Down()` also
+  closes tracked `StdNetBind` sockets. `WinRingBind` registers itself
+  explicitly so the same lifecycle shutdown closes the RIO bind too.
 - `WinRingBind` uses `RWMutex` plus `isOpen` to let send/receive operations race
   safely with `Close`.
 - `ReceiveFunc`s are intended to block in dedicated goroutines and to terminate

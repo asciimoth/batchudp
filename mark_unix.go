@@ -10,6 +10,7 @@ package conn
 import (
 	"runtime"
 
+	"github.com/asciimoth/gonnect/sockopt"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,31 +33,25 @@ func (s *StdNetBind) SetMark(mark uint32) error {
 		return nil
 	}
 	if s.ipv4 != nil {
-		fd, err := s.ipv4.SyscallConn()
-		if err != nil {
-			return err
-		}
-		err = fd.Control(func(fd uintptr) {
+		err := sockopt.Control(s.ipv4, func(fd uintptr) {
 			operr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, fwmarkIoctl, int(mark))
 		})
 		if err == nil {
 			err = operr
 		}
+		err = sockopt.IgnoreUnsupported(err)
 		if err != nil {
 			return err
 		}
 	}
 	if s.ipv6 != nil {
-		fd, err := s.ipv6.SyscallConn()
-		if err != nil {
-			return err
-		}
-		err = fd.Control(func(fd uintptr) {
+		err := sockopt.Control(s.ipv6, func(fd uintptr) {
 			operr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, fwmarkIoctl, int(mark))
 		})
 		if err == nil {
 			err = operr
 		}
+		err = sockopt.IgnoreUnsupported(err)
 		if err != nil {
 			return err
 		}

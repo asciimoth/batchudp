@@ -7,11 +7,12 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/asciimoth/gonnect/native"
 	"golang.org/x/net/ipv6"
 )
 
 func TestStdNetBindReceiveFuncAfterClose(t *testing.T) {
-	bind := NewStdNetBind().(*StdNetBind)
+	bind := NewStdNetBind((&native.Config{}).Build()).(*StdNetBind)
 	fns, _, err := bind.Open(0)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +48,7 @@ func TestStdNetEndpointClearSrcRetainsBackingStorage(t *testing.T) {
 }
 
 func TestStdNetBindMessagePoolReset(t *testing.T) {
-	bind := NewStdNetBind().(*StdNetBind)
+	bind := NewStdNetBind((&native.Config{}).Build()).(*StdNetBind)
 	msgs := bind.getMessages()
 
 	(*msgs)[0].N = 123

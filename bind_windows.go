@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/asciimoth/gonnect"
+	"github.com/asciimoth/gonnect/sockopt"
 	"golang.org/x/sys/windows"
 
 	"golang.zx2c4.com/wireguard/conn/winrio"
@@ -72,18 +74,25 @@ type afWinRingBind struct {
 
 // WinRingBind uses Windows registered I/O for fast ring buffered networking.
 type WinRingBind struct {
-	v4, v6 afWinRingBind
-	mu     sync.RWMutex
-	isOpen atomic.Uint32 // 0, 1, or 2
+	v4, v6    afWinRingBind
+	mu        sync.RWMutex
+	isOpen    atomic.Uint32 // 0, 1, or 2
+	tracker   closerTracker
+	trackerID uint64
 }
 
-func NewDefaultBind() Bind { return NewWinRingBind() }
-
-func NewWinRingBind() Bind {
-	if !winrio.Initialize() {
-		return NewStdNetBind()
+func NewDefaultBind(network gonnect.Network) Bind {
+	if network == nil || !network.IsNative() || unwrapNativeNetwork(network) == nil {
+		return NewStdNetBind(network)
 	}
-	return new(WinRingBind)
+	return NewWinRingBind(network)
+}
+
+func NewWinRingBind(network gonnect.Network) Bind {
+	if !winrio.Initialize() {
+		return NewStdNetBind(network)
+	}
+	return &WinRingBind{tracker: unwrapNativeNetwork(network)}
 }
 
 type WinRingEndpoint struct {
@@ -213,6 +222,10 @@ func (bind *afWinRingBind) CloseAndZero() {
 
 func (bind *WinRingBind) closeAndZero() {
 	bind.isOpen.Store(0)
+	if bind.tracker != nil && bind.trackerID != 0 {
+		bind.tracker.Unregister(bind.trackerID)
+		bind.trackerID = 0
+	}
 	bind.v4.CloseAndZero()
 	bind.v6.CloseAndZero()
 }
@@ -298,6 +311,13 @@ func (bind *WinRingBind) Open(port uint16) (recvFns []ReceiveFunc, selectedPort 
 		if err != nil {
 			return nil, 0, err
 		}
+	}
+	if bind.tracker != nil {
+		trackerID := nextCloserID.Add(1)
+		if err := bind.tracker.Register(trackerID, bind); err != nil {
+			return nil, 0, err
+		}
+		bind.trackerID = trackerID
 	}
 	bind.isOpen.Store(1)
 	return []ReceiveFunc{bind.receiveIPv4, bind.receiveIPv6}, selectedPort, err
@@ -517,11 +537,11 @@ func (bind *WinRingBind) Send(bufs [][]byte, endpoint Endpoint) error {
 func (s *StdNetBind) BindSocketToInterface4(interfaceIndex uint32, blackhole bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sysconn, err := s.ipv4.SyscallConn()
-	if err != nil {
-		return err
+	if s.ipv4 == nil {
+		return net.ErrClosed
 	}
-	err2 := sysconn.Control(func(fd uintptr) {
+	var err error
+	err2 := sockopt.Control(s.ipv4, func(fd uintptr) {
 		err = bindSocketToInterface4(windows.Handle(fd), interfaceIndex)
 	})
 	if err2 != nil {
@@ -537,11 +557,11 @@ func (s *StdNetBind) BindSocketToInterface4(interfaceIndex uint32, blackhole boo
 func (s *StdNetBind) BindSocketToInterface6(interfaceIndex uint32, blackhole bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sysconn, err := s.ipv6.SyscallConn()
-	if err != nil {
-		return err
+	if s.ipv6 == nil {
+		return net.ErrClosed
 	}
-	err2 := sysconn.Control(func(fd uintptr) {
+	var err error
+	err2 := sockopt.Control(s.ipv6, func(fd uintptr) {
 		err = bindSocketToInterface6(windows.Handle(fd), interfaceIndex)
 	})
 	if err2 != nil {

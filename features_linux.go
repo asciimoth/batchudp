@@ -6,17 +6,13 @@
 package conn
 
 import (
-	"net"
-
+	"github.com/asciimoth/gonnect"
+	"github.com/asciimoth/gonnect/sockopt"
 	"golang.org/x/sys/unix"
 )
 
-func supportsUDPOffload(conn *net.UDPConn) (txOffload, rxOffload bool) {
-	rc, err := conn.SyscallConn()
-	if err != nil {
-		return
-	}
-	err = rc.Control(func(fd uintptr) {
+func supportsUDPOffload(conn gonnect.UDPConn) (txOffload, rxOffload bool) {
+	err := sockopt.Control(conn, func(fd uintptr) {
 		_, errSyscall := unix.GetsockoptInt(int(fd), unix.IPPROTO_UDP, unix.UDP_SEGMENT)
 		txOffload = errSyscall == nil
 		opt, errSyscall := unix.GetsockoptInt(int(fd), unix.IPPROTO_UDP, unix.UDP_GRO)
