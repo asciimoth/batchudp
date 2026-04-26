@@ -22,9 +22,13 @@ const (
 // A ReceiveFunc receives at least one packet from the network and writes them
 // into packets. On a successful read it returns the number of elements of
 // sizes, packets, and endpoints that should be evaluated. Some elements of
-// sizes may be zero, and callers should ignore them. Callers must pass a sizes
-// and eps slice with a length greater than or equal to the length of packets.
+// sizes may be zero, and callers should ignore them. Callers must pass sizes
+// and eps slices with a length greater than or equal to the length of packets.
 // These lengths must not exceed the length of the associated Bind.BatchSize().
+//
+// ReceiveFuncs returned by Bind.Open remain valid until the next Bind.Close.
+// They are expected to block waiting for input, may be called concurrently with
+// Bind.Send, and must unblock and return net.ErrClosed after Close.
 type ReceiveFunc func(packets [][]byte, sizes []int, eps []Endpoint) (n int, err error)
 
 // A Bind listens on a port for both IPv6 and IPv4 UDP traffic.
@@ -32,33 +36,63 @@ type ReceiveFunc func(packets [][]byte, sizes []int, eps []Endpoint) (n int, err
 // A Bind interface may also be a PeekLookAtSocketFd or BindSocketToInterface,
 // depending on the platform-specific implementation.
 type Bind interface {
-	// Open puts the Bind into a listening state on a given port and reports the actual
-	// port that it bound to. Passing zero results in a random selection.
+	// Open puts the Bind into a listening state on a given port and reports the
+	// actual port that it bound to. Passing zero results in a random selection.
 	// fns is the set of functions that will be called to receive packets.
+	//
+	// Open fails with ErrBindAlreadyOpen if the bind is already open. Callers
+	// should treat Open as a lifecycle transition rather than an operation to run
+	// concurrently with another Open or Close.
 	Open(port uint16) (fns []ReceiveFunc, actualPort uint16, err error)
 
 	// Close closes the Bind listener.
-	// All fns returned by Open must return net.ErrClosed after a call to Close.
+	//
+	// Close is safe to race with Send and with ReceiveFuncs returned by Open.
+	// All ReceiveFuncs returned by Open must eventually return net.ErrClosed
+	// after Close. Repeated Close calls are allowed.
 	Close() error
 
 	// SetMark sets the mark for each packet sent through this Bind.
-	// This mark is passed to the kernel as the socket option SO_MARK.
+	//
+	// On Linux and Android this is SO_MARK; on FreeBSD and OpenBSD the platform
+	// equivalent is used; on other platforms this is a no-op. Implementations
+	// apply the mark to the currently open sockets, so it should be called after
+	// Open and again after reopening a Bind.
 	SetMark(mark uint32) error
 
 	// Send writes one or more packets in bufs to address ep. The length of
 	// bufs must not exceed BatchSize().
+	//
+	// Send is safe for concurrent use with other Send calls and with Close.
+	// The endpoint must have been created by this Bind implementation's
+	// ParseEndpoint, or otherwise be of the implementation-specific endpoint
+	// type expected by the Bind. On Linux and Android, StdNetBind may coalesce
+	// multiple datagrams into one sendmsg when UDP segmentation offload is
+	// available; if the kernel rejects UDP GSO, it is disabled for the socket
+	// and the send is retried without offload.
 	Send(bufs [][]byte, ep Endpoint) error
 
 	// ParseEndpoint creates a new endpoint from a string.
+	//
+	// Parsed endpoints are Bind-implementation specific. Endpoint values should
+	// be treated as immutable once shared with Send or a ReceiveFunc; mutating an
+	// endpoint's cached source state is not required to be thread-safe.
 	ParseEndpoint(s string) (Endpoint, error)
 
 	// BatchSize is the number of buffers expected to be passed to
-	// the ReceiveFuncs, and the maximum expected to be passed to SendBatch.
+	// the ReceiveFuncs, and the maximum expected to be passed to Send.
+	//
+	// StdNetBind returns IdealBatchSize on Linux and Android and 1 elsewhere.
+	// WinRingBind currently returns 1.
 	BatchSize() int
 }
 
 // BindSocketToInterface is implemented by Bind objects that support being
 // tied to a single network interface. Used by wireguard-windows.
+//
+// These methods act on already-open sockets. They may also enable blackhole
+// mode for the selected address family, causing subsequent sends for that
+// family to be dropped locally.
 type BindSocketToInterface interface {
 	BindSocketToInterface4(interfaceIndex uint32, blackhole bool) error
 	BindSocketToInterface6(interfaceIndex uint32, blackhole bool) error
@@ -66,6 +100,9 @@ type BindSocketToInterface interface {
 
 // PeekLookAtSocketFd is implemented by Bind objects that support having their
 // file descriptor peeked at. Used by wireguard-android.
+//
+// The returned fd is borrowed from the Bind; callers must not close it and
+// should assume it becomes invalid after Close.
 type PeekLookAtSocketFd interface {
 	PeekLookAtSocketFd4() (fd int, err error)
 	PeekLookAtSocketFd6() (fd int, err error)
