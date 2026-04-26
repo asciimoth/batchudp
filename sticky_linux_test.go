@@ -125,6 +125,22 @@ func Test_setSrcControl(t *testing.T) {
 			t.Errorf("unexpected control: %v", control)
 		}
 	})
+
+	t.Run("InsufficientCapacityLeavesControlUntouched", func(t *testing.T) {
+		ep := &StdNetEndpoint{
+			AddrPort: netip.MustParseAddrPort("127.0.0.1:1234"),
+		}
+		setSrc(ep, netip.MustParseAddr("127.0.0.1"), 5)
+
+		control := []byte{1, 2, 3}
+		want := append([]byte(nil), control...)
+
+		setSrcControl(&control, ep)
+
+		if string(control) != string(want) {
+			t.Fatalf("control changed: got %v want %v", control, want)
+		}
+	})
 }
 
 func Test_getSrcFromControl(t *testing.T) {
@@ -207,6 +223,35 @@ func Test_getSrcFromControl(t *testing.T) {
 		}
 		if ep.SrcIfidx() != 5 {
 			t.Errorf("unexpected ifindex: %d", ep.SrcIfidx())
+		}
+	})
+	t.Run("FirstPktinfoWins", func(t *testing.T) {
+		first := make([]byte, unix.CmsgSpace(unix.SizeofInet4Pktinfo))
+		firstHdr := (*unix.Cmsghdr)(unsafe.Pointer(&first[0]))
+		firstHdr.Level = unix.IPPROTO_IP
+		firstHdr.Type = unix.IP_PKTINFO
+		firstHdr.SetLen(unix.CmsgLen(int(unsafe.Sizeof(unix.Inet4Pktinfo{}))))
+		firstInfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&first[unix.CmsgLen(0)]))
+		firstInfo.Spec_dst = [4]byte{127, 0, 0, 1}
+		firstInfo.Ifindex = 5
+
+		second := make([]byte, unix.CmsgSpace(unix.SizeofInet4Pktinfo))
+		secondHdr := (*unix.Cmsghdr)(unsafe.Pointer(&second[0]))
+		secondHdr.Level = unix.IPPROTO_IP
+		secondHdr.Type = unix.IP_PKTINFO
+		secondHdr.SetLen(unix.CmsgLen(int(unsafe.Sizeof(unix.Inet4Pktinfo{}))))
+		secondInfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&second[unix.CmsgLen(0)]))
+		secondInfo.Spec_dst = [4]byte{127, 0, 0, 2}
+		secondInfo.Ifindex = 9
+
+		ep := &StdNetEndpoint{}
+		getSrcFromControl(append(first, second...), ep)
+
+		if got := ep.SrcIP(); got != netip.MustParseAddr("127.0.0.1") {
+			t.Fatalf("SrcIP = %v, want 127.0.0.1", got)
+		}
+		if got := ep.SrcIfidx(); got != 5 {
+			t.Fatalf("SrcIfidx = %d, want 5", got)
 		}
 	})
 }

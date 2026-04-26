@@ -2,7 +2,9 @@ package conn
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
+	"net/netip"
 	"testing"
 
 	"golang.org/x/net/ipv6"
@@ -24,6 +26,57 @@ func TestStdNetBindReceiveFuncAfterClose(t *testing.T) {
 		// unguarded. Close() nils the conn-related fields resulting in a panic
 		// if they violate the mutex.
 		fn(bufs, sizes, eps)
+	}
+}
+
+func TestStdNetEndpointClearSrcRetainsBackingStorage(t *testing.T) {
+	ep := &StdNetEndpoint{
+		AddrPort: netip.MustParseAddrPort("127.0.0.1:1"),
+		src:      make([]byte, 4, 32),
+	}
+	copy(ep.src, []byte{1, 2, 3, 4})
+
+	ep.ClearSrc()
+
+	if len(ep.src) != 0 {
+		t.Fatalf("len(src) = %d, want 0", len(ep.src))
+	}
+	if cap(ep.src) != 32 {
+		t.Fatalf("cap(src) = %d, want 32", cap(ep.src))
+	}
+}
+
+func TestStdNetBindMessagePoolReset(t *testing.T) {
+	bind := NewStdNetBind().(*StdNetBind)
+	msgs := bind.getMessages()
+
+	(*msgs)[0].N = 123
+	(*msgs)[0].NN = 9
+	(*msgs)[0].Addr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}
+	(*msgs)[0].Buffers[0] = []byte{1, 2, 3}
+	(*msgs)[0].OOB = append((*msgs)[0].OOB, 1, 2, 3)
+
+	bind.putMessages(msgs)
+
+	msgs = bind.getMessages()
+	defer bind.putMessages(msgs)
+
+	for i, msg := range *msgs {
+		if msg.N != 0 {
+			t.Fatalf("msgs[%d].N = %d, want 0", i, msg.N)
+		}
+		if msg.NN != 0 {
+			t.Fatalf("msgs[%d].NN = %d, want 0", i, msg.NN)
+		}
+		if msg.Addr != nil {
+			t.Fatalf("msgs[%d].Addr = %#v, want nil", i, msg.Addr)
+		}
+		if len(msg.Buffers) != 1 {
+			t.Fatalf("msgs[%d].Buffers len = %d, want 1", i, len(msg.Buffers))
+		}
+		if len(msg.OOB) != 0 {
+			t.Fatalf("msgs[%d].OOB len = %d, want 0", i, len(msg.OOB))
+		}
 	}
 }
 
@@ -246,5 +299,60 @@ func Test_splitCoalescedMessages(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func Test_splitCoalescedMessagesPreservesPayloadAndAddr(t *testing.T) {
+	msgs := make([]ipv6.Message, 4)
+	for i := range msgs {
+		msgs[i].Buffers = [][]byte{make([]byte, 8)}
+	}
+
+	src := []byte{1, 2, 3, 4, 5, 6}
+	copy(msgs[3].Buffers[0], src)
+	msgs[3].N = len(src)
+	msgs[3].NN = 2
+	msgs[3].OOB = make([]byte, 2)
+	binary.LittleEndian.PutUint16(msgs[3].OOB, 2)
+	addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}
+	msgs[3].Addr = addr
+
+	n, err := splitCoalescedMessages(msgs, 3, mockGetGSOSize)
+	if err != nil {
+		t.Fatalf("splitCoalescedMessages err: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("splitCoalescedMessages n = %d, want 3", n)
+	}
+
+	wantPayloads := [][]byte{
+		{1, 2},
+		{3, 4},
+		{5, 6},
+	}
+	for i, want := range wantPayloads {
+		got := msgs[i].Buffers[0][:msgs[i].N]
+		if msgs[i].Addr != addr {
+			t.Fatalf("msgs[%d].Addr = %#v, want %#v", i, msgs[i].Addr, addr)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("msgs[%d] payload = %v, want %v", i, got, want)
+		}
+	}
+}
+
+func Test_splitCoalescedMessagesPropagatesGSOParseError(t *testing.T) {
+	msgs := make([]ipv6.Message, 1)
+	msgs[0].Buffers = [][]byte{make([]byte, 4)}
+	msgs[0].N = 4
+	msgs[0].NN = 1
+	msgs[0].OOB = []byte{1}
+
+	wantErr := errors.New("boom")
+	_, err := splitCoalescedMessages(msgs, 0, func(control []byte) (int, error) {
+		return 0, wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
 }
