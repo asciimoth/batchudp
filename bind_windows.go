@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	packetsPerRing = 1024
-	bytesPerPacket = 2048 - 32
+	packetsPerRing = 256
+	bytesPerPacket = 65507
 	receiveSpins   = 15
 )
 
@@ -186,24 +186,6 @@ func (e *WinRingEndpoint) DstToString() string {
 
 func (e *WinRingEndpoint) SrcToString() string {
 	return ""
-}
-
-func (e *WinRingEndpoint) sockaddr() (windows.Sockaddr, error) {
-	switch e.family {
-	case windows.AF_INET:
-		sa := &windows.SockaddrInet4{Port: int(binary.BigEndian.Uint16(e.data[0:2]))}
-		copy(sa.Addr[:], e.data[2:6])
-		return sa, nil
-	case windows.AF_INET6:
-		sa := &windows.SockaddrInet6{
-			Port:   int(binary.BigEndian.Uint16(e.data[0:2])),
-			ZoneId: *(*uint32)(unsafe.Pointer(&e.data[22])),
-		}
-		copy(sa.Addr[:], e.data[6:22])
-		return sa, nil
-	default:
-		return nil, windows.ERROR_INVALID_ADDRESS
-	}
 }
 
 func (ring *ringBuffer) CloseAndZero() {
@@ -436,9 +418,10 @@ retry:
 	if err != nil {
 		return 0, nil, err
 	}
-	// We limit the MTU well below the 65k max for practicality, but this means a remote host can still send us
-	// huge packets. Just try again when this happens. The infinite loop this could cause is still limited to
-	// attacker bandwidth, just like the rest of the receive path.
+	// The ring stores full UDP payloads, but a remote host can still send us larger
+	// packets than our caller-provided receive buffer. Just try again when this
+	// happens. The infinite loop this could cause is still limited to attacker
+	// bandwidth, just like the rest of the receive path.
 	if windows.Errno(results[0].Status) == windows.WSAEMSGSIZE {
 		if isOpen.Load() != 1 {
 			return 0, nil, net.ErrClosed
@@ -489,19 +472,7 @@ func (bind *afWinRingBind) Send(buf []byte, nend *WinRingEndpoint, isOpen *atomi
 		return net.ErrClosed
 	}
 	if len(buf) > bytesPerPacket {
-		sa, err := nend.sockaddr()
-		if err != nil {
-			return err
-		}
-		var ptr *byte
-		if len(buf) > 0 {
-			ptr = &buf[0]
-		}
-		wsabuf := windows.WSABuf{
-			Len: uint32(len(buf)),
-			Buf: ptr,
-		}
-		return windows.WSASendto(bind.sock, &wsabuf, 1, nil, 0, sa, nil, nil)
+		return io.ErrShortBuffer
 	}
 	bind.tx.mu.Lock()
 	defer bind.tx.mu.Unlock()
