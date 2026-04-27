@@ -20,3 +20,6 @@ Differences from the [wireguard-go/conn](https://github.com/WireGuard/wireguard-
   itself for external closer tracking so `Network.Down()` closes the bind.
 - Receive functions now return `ErrReadBufferTooShort` when the caller supplies
   fewer than `BatchSize()` packet, size, or endpoint slots.
+- Added `TryUpgradeToBatchingConn`, a Linux-only upgrade path from a native
+  backed `gonnect.PacketConn`/`gonnect.UDPConn` to a standalone batched UDP
+  socket API with `ReadBatch` and `WriteBatchTo`.

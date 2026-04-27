@@ -10,6 +10,10 @@ main job is to expose a single `Bind` abstraction that:
 - sends one or more datagrams to a parsed `Endpoint`,
 - hides platform-specific socket setup, batching, and ancillary data details.
 
+It also exposes an optional `BatchingConn` upgrade path for callers that start
+from a single `gonnect.PacketConn` / `gonnect.UDPConn` instead of the
+WireGuard-style `Bind` lifecycle.
+
 The public contracts live in `conn.go`.
 The concrete implementations are:
 
@@ -20,6 +24,12 @@ The concrete implementations are:
 - `WinRingBind` in `bind_windows.go`:
   the Windows-specific fast path using Registered I/O.
 
+The batching-conn upgrade is implemented separately:
+
+- `batching_conn_linux.go`: Linux-only wrapper that upgrades a native-backed
+  `gonnect.UDPConn` with `ReadBatch` and `WriteBatchTo`.
+- `batching_conn_default.go`: no-op upgrade path for non-Linux builds.
+
 `NewDefaultBind` selects the implementation:
 
 - `default.go`: non-Windows uses `NewStdNetBind(network)`.
@@ -28,6 +38,20 @@ The concrete implementations are:
   it uses `StdNetBind(network)`.
 
 ## Main Data Flow
+
+### BatchingConn upgrade
+
+`TryUpgradeToBatchingConn` is the entry point for the socket-upgrade path.
+
+1. It accepts a `gonnect.PacketConn`, a UDP network string (`udp4` or `udp6`),
+   and a desired batch size.
+2. On Linux, it upgrades only values that also implement `gonnect.UDPConn` and
+   unwrap to a native `*net.UDPConn`.
+3. The upgraded wrapper keeps the original `gonnect.UDPConn` for ordinary UDP
+   methods while constructing an `ipv4.PacketConn` or `ipv6.PacketConn` around
+   the native socket for batched I/O.
+4. On all other platforms, or for unsupported connection types, the function
+   returns the original connection unchanged.
 
 ### Open
 
@@ -63,6 +87,20 @@ For `WinRingBind`:
 5. `Open` returns two receive functions, `receiveIPv4` and `receiveIPv6`.
 
 ### Receive
+
+For `BatchingConn`, the receive path lives in `ReadBatch` in
+`batching_conn_linux.go`:
+
+- Callers pass a slice of `ipv6.Message` values, each with at least one data
+  buffer and control-buffer capacity of at least `MinControlMessageSize()`.
+- Without RX offload, `ReadBatch` forwards directly to `ReadBatch` on the
+  wrapped `ipv4.PacketConn` / `ipv6.PacketConn`.
+- With UDP GRO enabled, it reads into the tail of the caller's message slice
+  and then reuses `splitCoalescedMessages` to expand coalesced datagrams back
+  into packet-per-buffer results at the head of the slice.
+- Single-packet `ReadFromUDP` and `ReadFromUDPAddrPort` are intentionally
+  rejected with `ErrSinglePacketReadUnsupported`, because they cannot safely
+  represent GRO-coalesced reads.
 
 For `StdNetBind`, the receive path lives in `receiveIP` in`bind_std.go`:
 
@@ -101,6 +139,16 @@ For `WinRingBind`:
   `BatchSize()` is `1`.
 
 ### Send
+
+For `BatchingConn`, `WriteBatchTo` in `batching_conn_linux.go`:
+
+1. validates that the caller supplied no more than `BatchSize()` datagrams,
+2. converts the target `netip.AddrPort` into a pooled `net.UDPAddr`,
+3. coalesces same-destination datagrams with UDP GSO when TX offload is
+   available, using scatter-gather buffers rather than copying into one large
+   payload,
+4. falls back to plain `sendmmsg`-style batched writes without GSO when
+   offload is unavailable or gets disabled after a kernel error.
 
 For `StdNetBind`, `Send` in `bind_std.go`:
 
