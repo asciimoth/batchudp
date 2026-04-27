@@ -493,7 +493,15 @@ func (bind *afWinRingBind) Send(buf []byte, nend *WinRingEndpoint, isOpen *atomi
 		if err != nil {
 			return err
 		}
-		return windows.Sendto(bind.sock, buf, 0, sa)
+		var ptr *byte
+		if len(buf) > 0 {
+			ptr = &buf[0]
+		}
+		wsabuf := windows.WSABuf{
+			Len: uint32(len(buf)),
+			Buf: ptr,
+		}
+		return windows.WSASendto(bind.sock, &wsabuf, 1, nil, 0, sa, nil, nil)
 	}
 	bind.tx.mu.Lock()
 	defer bind.tx.mu.Unlock()
