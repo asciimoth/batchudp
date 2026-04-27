@@ -75,7 +75,8 @@ For `StdNetBind`, the receive path lives in `receiveIP` in`bind_std.go`:
   datagram at a time.
 - Received control data is parsed by `getSrcFromControl`.
 - The returned `Endpoint` is a `StdNetEndpoint`, which holds destination
-  address data plus optional cached source control data.
+  address data plus optional cached source control data. IPv4-mapped IPv6
+  source addresses are normalized back to plain IPv4 before being exposed.
 
 When Linux/Android RX offload is enabled:
 
@@ -107,7 +108,7 @@ For `StdNetBind`, `Send` in `bind_std.go`:
 2. converts the destination `StdNetEndpoint` into a pooled `net.UDPAddr`,
 3. optionally attaches sticky source control data with `setSrcControl`,
 4. sends via `send`, using either `WriteBatch` on Linux/Android or
-   `gonnect.UDPConn.WriteMsgUDP` elsewhere.
+   `gonnect.UDPConn.WriteMsgUDPAddrPort` elsewhere.
 
 On Linux/Android TX offload:
 

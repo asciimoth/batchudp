@@ -319,6 +319,7 @@ func (s *StdNetBind) receiveIP(
 			continue
 		}
 		addrPort := msg.Addr.(*net.UDPAddr).AddrPort()
+		addrPort = netip.AddrPortFrom(addrPort.Addr().Unmap(), addrPort.Port())
 		ep := &StdNetEndpoint{AddrPort: addrPort} // TODO: remove allocation
 		getSrcFromControl(msg.OOB[:msg.NN], ep)
 		eps[i] = ep
@@ -489,7 +490,11 @@ func (s *StdNetBind) send(conn gonnect.UDPConn, pc batchWriter, msgs []ipv6.Mess
 		}
 	} else {
 		for _, msg := range msgs {
-			_, _, err = conn.WriteMsgUDP(msg.Buffers[0], msg.OOB, msg.Addr.(*net.UDPAddr))
+			_, _, err = conn.WriteMsgUDPAddrPort(
+				msg.Buffers[0],
+				msg.OOB,
+				msg.Addr.(*net.UDPAddr).AddrPort(),
+			)
 			if err != nil {
 				break
 			}
