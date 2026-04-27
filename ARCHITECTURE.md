@@ -169,8 +169,10 @@ On Linux/Android TX offload:
   `ErrUDPGSODisabled` wrapping the retry result.
 
 For `WinRingBind`, `Send` dispatches each buffer individually through
-`afWinRingBind.Send`, which writes the payload and destination into the TX ring
-and submits a `winrio.SendEx` request.
+`afWinRingBind.Send`. Payloads that fit in the fixed RIO ring slot are copied
+into the TX ring and submitted with `winrio.SendEx`; larger datagrams fall back
+to a plain `sendto` on the already-bound socket so Windows keeps supporting
+normal UDP payload sizes.
 
 ### Close
 

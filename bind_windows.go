@@ -188,6 +188,24 @@ func (e *WinRingEndpoint) SrcToString() string {
 	return ""
 }
 
+func (e *WinRingEndpoint) sockaddr() (windows.Sockaddr, error) {
+	switch e.family {
+	case windows.AF_INET:
+		sa := &windows.SockaddrInet4{Port: int(binary.BigEndian.Uint16(e.data[0:2]))}
+		copy(sa.Addr[:], e.data[2:6])
+		return sa, nil
+	case windows.AF_INET6:
+		sa := &windows.SockaddrInet6{
+			Port:   int(binary.BigEndian.Uint16(e.data[0:2])),
+			ZoneId: *(*uint32)(unsafe.Pointer(&e.data[22])),
+		}
+		copy(sa.Addr[:], e.data[6:22])
+		return sa, nil
+	default:
+		return nil, windows.ERROR_INVALID_ADDRESS
+	}
+}
+
 func (ring *ringBuffer) CloseAndZero() {
 	if ring.cq != 0 {
 		winrio.CloseCompletionQueue(ring.cq)
@@ -471,7 +489,11 @@ func (bind *afWinRingBind) Send(buf []byte, nend *WinRingEndpoint, isOpen *atomi
 		return net.ErrClosed
 	}
 	if len(buf) > bytesPerPacket {
-		return io.ErrShortBuffer
+		sa, err := nend.sockaddr()
+		if err != nil {
+			return err
+		}
+		return windows.Sendto(bind.sock, buf, 0, sa)
 	}
 	bind.tx.mu.Lock()
 	defer bind.tx.mu.Unlock()

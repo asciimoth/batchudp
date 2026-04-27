@@ -16,6 +16,8 @@ Differences from the [wireguard-go/conn](https://github.com/WireGuard/wireguard-
 - On Windows, `WinRingBind` is only selected when the supplied network unwraps
   to `gonnect/native.Network`; otherwise `NewDefaultBind` falls back to
   `StdNetBind`.
+- On Windows, `WinRingBind` falls back to plain socket `sendto` for datagrams
+  larger than its fixed RIO ring slot instead of failing with `io.ErrShortBuffer`.
 - When `WinRingBind` is selected with `gonnect/native.Network`, it registers
   itself for external closer tracking so `Network.Down()` closes the bind.
 - Receive functions now return `ErrReadBufferTooShort` when the caller supplies
