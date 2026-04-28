@@ -12,7 +12,7 @@ import (
 	"net/netip"
 	"os"
 
-	"github.com/asciimoth/batchudp"
+	budp "github.com/asciimoth/batchudp"
 )
 
 type ChannelBind struct {
@@ -26,11 +26,11 @@ type ChannelBind struct {
 type ChannelEndpoint uint16
 
 var (
-	_ conn.Bind     = (*ChannelBind)(nil)
-	_ conn.Endpoint = (*ChannelEndpoint)(nil)
+	_ budp.Bind     = (*ChannelBind)(nil)
+	_ budp.Endpoint = (*ChannelEndpoint)(nil)
 )
 
-func NewChannelBinds() [2]conn.Bind {
+func NewChannelBinds() [2]budp.Bind {
 	arx4 := make(chan []byte, 8192)
 	brx4 := make(chan []byte, 8192)
 	arx6 := make(chan []byte, 8192)
@@ -52,7 +52,7 @@ func NewChannelBinds() [2]conn.Bind {
 	binds[0].source6 = binds[1].target6
 	binds[1].source4 = binds[0].target4
 	binds[1].source6 = binds[0].target6
-	return [2]conn.Bind{&binds[0], &binds[1]}
+	return [2]budp.Bind{&binds[0], &binds[1]}
 }
 
 func (c ChannelEndpoint) ClearSrc() {}
@@ -67,7 +67,7 @@ func (c ChannelEndpoint) DstIP() netip.Addr { return netip.AddrFrom4([4]byte{127
 
 func (c ChannelEndpoint) SrcIP() netip.Addr { return netip.Addr{} }
 
-func (c *ChannelBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
+func (c *ChannelBind) Open(port uint16) (fns []budp.ReceiveFunc, actualPort uint16, err error) {
 	c.closeSignal = make(chan bool)
 	fns = append(fns, c.makeReceiveFunc(*c.rx4))
 	fns = append(fns, c.makeReceiveFunc(*c.rx6))
@@ -93,8 +93,8 @@ func (c *ChannelBind) BatchSize() int { return 1 }
 
 func (c *ChannelBind) SetMark(mark uint32) error { return nil }
 
-func (c *ChannelBind) makeReceiveFunc(ch chan []byte) conn.ReceiveFunc {
-	return func(bufs [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
+func (c *ChannelBind) makeReceiveFunc(ch chan []byte) budp.ReceiveFunc {
+	return func(bufs [][]byte, sizes []int, eps []budp.Endpoint) (n int, err error) {
 		select {
 		case <-c.closeSignal:
 			return 0, net.ErrClosed
@@ -107,7 +107,7 @@ func (c *ChannelBind) makeReceiveFunc(ch chan []byte) conn.ReceiveFunc {
 	}
 }
 
-func (c *ChannelBind) Send(bufs [][]byte, ep conn.Endpoint) error {
+func (c *ChannelBind) Send(bufs [][]byte, ep budp.Endpoint) error {
 	for _, b := range bufs {
 		select {
 		case <-c.closeSignal:
@@ -127,7 +127,7 @@ func (c *ChannelBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	return nil
 }
 
-func (c *ChannelBind) ParseEndpoint(s string) (conn.Endpoint, error) {
+func (c *ChannelBind) ParseEndpoint(s string) (budp.Endpoint, error) {
 	addr, err := netip.ParseAddrPort(s)
 	if err != nil {
 		return nil, err
