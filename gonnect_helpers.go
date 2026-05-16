@@ -4,7 +4,6 @@ import (
 	"net"
 
 	"github.com/asciimoth/gonnect"
-	gnative "github.com/asciimoth/gonnect/native"
 )
 
 func unwrapValue(v any) any {
@@ -26,10 +25,10 @@ func unwrapUDPConn(conn gonnect.UDPConn) *net.UDPConn {
 	return udp
 }
 
-func unwrapNativeNetwork(network gonnect.Network) *gnative.Network {
+func unwrapNativeNetwork(network gonnect.Network) *gonnect.NativeNetwork {
 	if network == nil {
 		return nil
 	}
-	native, _ := unwrapValue(network).(*gnative.Network)
+	native, _ := unwrapValue(network).(*gonnect.NativeNetwork)
 	return native
 }

@@ -149,11 +149,7 @@ func (s *StdNetBind) listenNet(network string, port int) (gonnect.UDPConn, int, 
 		conn gonnect.UDPConn
 		err  error
 	)
-	if lcn, ok := s.network.(gonnect.ListenConfigNetwork); ok {
-		conn, err = lcn.ListenUDPConfig(context.Background(), listenConfig(), network, address)
-	} else {
-		conn, err = s.network.ListenUDP(context.Background(), network, address)
-	}
+	conn, err = s.network.ListenUDPConfig(context.Background(), listenConfig(), network, address)
 	if err != nil {
 		return nil, 0, err
 	}

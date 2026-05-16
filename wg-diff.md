@@ -13,14 +13,16 @@ Differences from the [wireguard-go/conn](https://github.com/WireGuard/wireguard-
   networks such as loopback compatible with endpoint sends.
 - `StdNetBind` normalizes received IPv4-mapped IPv6 peer addresses back to
   plain IPv4 before exposing them as endpoints.
-- On Windows, `WinRingBind` is only selected when the supplied network unwraps
-  to `gonnect/native.Network`; otherwise `NewDefaultBind` falls back to
-  `StdNetBind`.
+- On Windows, `WinRingBind` is only selected when the supplied network is native
+  and exposes `SubscribeCloser(io.Closer)`; otherwise `NewDefaultBind` falls
+  back to `StdNetBind`.
 - On Windows, `WinRingBind` sizes each RIO packet slot for full UDP payloads
   and uses a smaller ring depth than upstream to keep the total allocation
   bounded while supporting larger datagrams.
-- When `WinRingBind` is selected with `gonnect/native.Network`, it registers
-  itself for external closer tracking so `Network.Down()` closes the bind.
+- When `WinRingBind` is selected, it subscribes itself for external closer
+  tracking so `Network.Down()` closes the bind.
+- gonnect listen control hooks may be ignored or called without raw-socket
+  access; bind-time controls now tolerate a nil `syscall.RawConn`.
 - Receive functions now return `ErrReadBufferTooShort` when the caller supplies
   fewer than `BatchSize()` packet, size, or endpoint slots.
 - Added `TryUpgradeToBatchingConn`, a Linux-only upgrade path from a native

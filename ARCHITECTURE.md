@@ -34,8 +34,8 @@ The batching-conn upgrade is implemented separately:
 
 - `default.go`: non-Windows uses `NewStdNetBind(network)`.
 - `bind_windows.go`: Windows uses `NewWinRingBind(network)` only when the
-  supplied network is native and unwraps to `gonnect/native.Network`; otherwise
-  it uses `StdNetBind(network)`.
+  supplied network is native and also exposes `SubscribeCloser(io.Closer)`;
+  otherwise it uses `StdNetBind(network)`.
 
 ## Main Data Flow
 
@@ -63,9 +63,9 @@ For `StdNetBind`:
    bind and rejects reopening with `ErrBindAlreadyOpen`.
 2. It calls `listenNet`, which builds sockets through the supplied
    `gonnect.Network`.
-3. If that network implements `gonnect.ListenConfigNetwork`, `listenConfig()` in
-   `controlfns.go` applies bind-time socket controls such as `IPV6_V6ONLY`
-   before `bind(2)`.
+3. `listenConfig()` in `controlfns.go` asks gonnect to apply bind-time socket
+   controls such as `IPV6_V6ONLY` before `bind(2)`. Some networks may ignore
+   the control hook or call it without raw-socket access.
 4. After open, `configureSocket()` applies the platform-specific post-open
    control hooks such as buffer sizing, PKTINFO reception, and optional
    `UDP_GRO`.
@@ -82,8 +82,8 @@ For `WinRingBind`:
 2. Each per-family bind allocates RX/TX rings, completion queues, and a RIO
    request queue.
 3. The bind preposts `packetsPerRing` receive requests for both families.
-4. If the supplied network unwraps to `gonnect/native.Network`, `Open`
-   registers the bind as an external closer so `Network.Down()` closes it.
+4. If the supplied network exposes `SubscribeCloser`, `Open` subscribes the
+   bind as an external closer so `Network.Down()` closes it.
 5. `Open` returns two receive functions, `receiveIPv4` and `receiveIPv6`.
 
 ### Receive
@@ -211,8 +211,8 @@ There are four main hook points:
 
 1. Socket creation:
    `StdNetBind.Open -> listenNet -> gonnect.Network`.
-   If `gonnect.ListenConfigNetwork` is available, `listenConfig()` applies the
-   bind-time controls first.
+   `listenConfig()` applies bind-time controls first when the supplied network
+   honors the hook and provides raw-socket access.
 2. Post-open socket configuration:
    `StdNetBind.Open -> configureSocket -> socketOpenControlFns`.
    This is where buffer sizes, PKTINFO reception, and `UDP_GRO` are configured
@@ -292,9 +292,10 @@ The implementation behavior behind that contract is:
   and flags, so sends can proceed concurrently with each other and with
   receives. A concurrent `Close` may cause an in-flight send to fail because the
   underlying socket was closed, but it should not corrupt bind state.
-- When the supplied network is `gonnect/native.Network`, `Network.Down()` also
-  closes tracked `StdNetBind` sockets. `WinRingBind` registers itself
-  explicitly so the same lifecycle shutdown closes the RIO bind too.
+- When the supplied network tracks opened connections, `Network.Down()` also
+  closes tracked `StdNetBind` sockets. `WinRingBind` is only selected for
+  native networks with `SubscribeCloser` and subscribes itself so the same
+  lifecycle shutdown closes the RIO bind too.
 - `WinRingBind` uses `RWMutex` plus `isOpen` to let send/receive operations race
   safely with `Close`.
 - `ReceiveFunc`s are intended to block in dedicated goroutines and to terminate

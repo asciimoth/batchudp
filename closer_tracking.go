@@ -1,13 +1,17 @@
 package conn
 
-import (
-	"io"
-	"sync/atomic"
-)
+import "io"
 
-type closerTracker interface {
-	Register(id uint64, c io.Closer) error
-	Unregister(id uint64)
+type closerSubscriber interface {
+	SubscribeCloser(c io.Closer) (func(), error)
 }
 
-var nextCloserID atomic.Uint64
+func winRingCloserSubscriber(network interface {
+	IsNative() bool
+}) (closerSubscriber, bool) {
+	if network == nil || !network.IsNative() {
+		return nil, false
+	}
+	subscriber, ok := network.(closerSubscriber)
+	return subscriber, ok
+}

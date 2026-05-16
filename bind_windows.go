@@ -74,25 +74,29 @@ type afWinRingBind struct {
 
 // WinRingBind uses Windows registered I/O for fast ring buffered networking.
 type WinRingBind struct {
-	v4, v6    afWinRingBind
-	mu        sync.RWMutex
-	isOpen    atomic.Uint32 // 0, 1, or 2
-	tracker   closerTracker
-	trackerID uint64
+	v4, v6      afWinRingBind
+	mu          sync.RWMutex
+	isOpen      atomic.Uint32 // 0, 1, or 2
+	subscriber  closerSubscriber
+	unsubscribe func()
 }
 
 func NewDefaultBind(network gonnect.Network) Bind {
-	if network == nil || !network.IsNative() || unwrapNativeNetwork(network) == nil {
+	if _, ok := winRingCloserSubscriber(network); !ok {
 		return NewStdNetBind(network)
 	}
 	return NewWinRingBind(network)
 }
 
 func NewWinRingBind(network gonnect.Network) Bind {
+	subscriber, ok := winRingCloserSubscriber(network)
+	if !ok {
+		return NewStdNetBind(network)
+	}
 	if !winrio.Initialize() {
 		return NewStdNetBind(network)
 	}
-	return &WinRingBind{tracker: unwrapNativeNetwork(network)}
+	return &WinRingBind{subscriber: subscriber}
 }
 
 type WinRingEndpoint struct {
@@ -222,9 +226,9 @@ func (bind *afWinRingBind) CloseAndZero() {
 
 func (bind *WinRingBind) closeAndZero() {
 	bind.isOpen.Store(0)
-	if bind.tracker != nil && bind.trackerID != 0 {
-		bind.tracker.Unregister(bind.trackerID)
-		bind.trackerID = 0
+	if bind.unsubscribe != nil {
+		bind.unsubscribe()
+		bind.unsubscribe = nil
 	}
 	bind.v4.CloseAndZero()
 	bind.v6.CloseAndZero()
@@ -312,12 +316,12 @@ func (bind *WinRingBind) Open(port uint16) (recvFns []ReceiveFunc, selectedPort 
 			return nil, 0, err
 		}
 	}
-	if bind.tracker != nil {
-		trackerID := nextCloserID.Add(1)
-		if err := bind.tracker.Register(trackerID, bind); err != nil {
+	if bind.subscriber != nil {
+		unsubscribe, err := bind.subscriber.SubscribeCloser(bind)
+		if err != nil {
 			return nil, 0, err
 		}
-		bind.trackerID = trackerID
+		bind.unsubscribe = unsubscribe
 	}
 	bind.isOpen.Store(1)
 	return []ReceiveFunc{bind.receiveIPv4, bind.receiveIPv6}, selectedPort, err

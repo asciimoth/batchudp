@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/asciimoth/gonnect"
-	"github.com/asciimoth/gonnect/native"
 )
 
 type listenCall struct {
@@ -17,7 +16,7 @@ type listenCall struct {
 }
 
 type recordingNetwork struct {
-	*native.Network
+	*gonnect.NativeNetwork
 
 	mu                   sync.Mutex
 	listenUDPCalls       []listenCall
@@ -26,7 +25,7 @@ type recordingNetwork struct {
 
 func newRecordingNetwork() *recordingNetwork {
 	return &recordingNetwork{
-		Network: (&native.Config{}).Build(),
+		NativeNetwork: (&gonnect.NativeConfig{}).Build(),
 	}
 }
 
@@ -40,7 +39,7 @@ func (n *recordingNetwork) ListenUDP(
 		laddr:   laddr,
 	})
 	n.mu.Unlock()
-	return n.Network.ListenUDP(ctx, network, laddr)
+	return n.NativeNetwork.ListenUDP(ctx, network, laddr)
 }
 
 func (n *recordingNetwork) ListenUDPConfig(
@@ -54,7 +53,7 @@ func (n *recordingNetwork) ListenUDPConfig(
 		laddr:   laddr,
 	})
 	n.mu.Unlock()
-	return n.Network.ListenUDPConfig(ctx, lc, network, laddr)
+	return n.NativeNetwork.ListenUDPConfig(ctx, lc, network, laddr)
 }
 
 func TestNewDefaultBindUsesProvidedNetwork(t *testing.T) {
@@ -102,8 +101,31 @@ func TestStdNetBindOpenUsesListenUDPConfigWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestListenConfigControlIgnoresNilRawConn(t *testing.T) {
+	if err := listenConfig().Control("udp6", "[::]:0", nil); err != nil {
+		t.Fatalf("Control() error = %v, want nil", err)
+	}
+}
+
+func TestWinRingCloserSubscriberRequiresNativeSubscribeCloser(t *testing.T) {
+	nativeNetwork := (&gonnect.NativeConfig{}).Build()
+	if _, ok := winRingCloserSubscriber(nativeNetwork); ok {
+		t.Fatal("native network without SubscribeCloser was accepted")
+	}
+
+	detachedNative := gonnect.DetachNetwork(nativeNetwork)
+	if _, ok := winRingCloserSubscriber(detachedNative); !ok {
+		t.Fatal("detached native network was rejected")
+	}
+
+	detachedLoopback := gonnect.DetachNetwork(gonnect.NewLoopbackNetwok())
+	if _, ok := winRingCloserSubscriber(detachedLoopback); ok {
+		t.Fatal("detached non-native network was accepted")
+	}
+}
+
 func TestNativeNetworkDownClosesStdNetBind(t *testing.T) {
-	network := (&native.Config{}).Build()
+	network := gonnect.DetachNetwork((&gonnect.NativeConfig{}).Build())
 	bind := NewStdNetBind(network).(*StdNetBind)
 
 	fns, _, err := bind.Open(0)

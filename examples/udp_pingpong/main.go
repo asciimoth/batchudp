@@ -14,8 +14,7 @@ import (
 
 	conn "github.com/asciimoth/batchudp"
 	"github.com/asciimoth/batchudp/bindtest"
-	"github.com/asciimoth/gonnect/loopback"
-	"github.com/asciimoth/gonnect/native"
+	"github.com/asciimoth/gonnect"
 )
 
 const maxUDPPayload = 65507
@@ -125,17 +124,16 @@ var scenarios = []scenario{
 	{
 		name: "native",
 		factory: func() (pairFactory, error) {
-			network := (&native.Config{}).Build()
+			network := (&gonnect.NativeConfig{}).Build()
 			return &sharedNetworkFactory{
 				newBind: func() conn.Bind { return conn.NewDefaultBind(network) },
-				close:   network.Down,
 			}, nil
 		},
 	},
 	{
 		name: "loopback",
 		factory: func() (pairFactory, error) {
-			network := loopback.NewLoopbackNetwok()
+			network := gonnect.NewLoopbackNetwok()
 			return &sharedNetworkFactory{
 				newBind: func() conn.Bind { return conn.NewDefaultBind(network) },
 				close:   network.Down,

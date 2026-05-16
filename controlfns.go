@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/asciimoth/gonnect"
-	"github.com/asciimoth/gonnect/helpers"
 )
 
 // UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it is
@@ -25,7 +24,7 @@ const socketBufferSize = 7 << 20
 type controlFn func(network, address string, c syscall.RawConn) error
 
 // listenControlFns are applied before bind through gonnect.ListenConfig when
-// the supplied Network supports it.
+// the supplied Network honors the control hook.
 var listenControlFns = []controlFn{}
 
 // socketOpenControlFns are applied after socket creation. Helpers should treat
@@ -34,10 +33,14 @@ var listenControlFns = []controlFn{}
 var socketOpenControlFns = []controlFn{}
 
 // listenConfig returns a gonnect.ListenConfig that applies listenControlFns to
-// the socket prior to bind.
+// the socket prior to bind. gonnect.Network implementations may ignore this
+// hook or call it without raw-socket access.
 func listenConfig() *gonnect.ListenConfig {
 	return &gonnect.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
+			if c == nil {
+				return nil
+			}
 			for _, fn := range listenControlFns {
 				if err := fn(network, address, c); err != nil {
 					return err
@@ -49,7 +52,7 @@ func listenConfig() *gonnect.ListenConfig {
 }
 
 func configureSocket(conn gonnect.UDPConn, network, address string) error {
-	rc, err := helpers.SyscallConn(conn)
+	rc, err := gonnect.SyscallConn(conn)
 	if err != nil || rc == nil {
 		return err
 	}

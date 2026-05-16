@@ -14,7 +14,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/asciimoth/gonnect/native"
+	"github.com/asciimoth/gonnect"
 	"golang.org/x/sys/unix"
 )
 
@@ -258,7 +258,7 @@ func Test_getSrcFromControl(t *testing.T) {
 
 func Test_listenConfig(t *testing.T) {
 	t.Run("IPv4", func(t *testing.T) {
-		conn, err := (&native.Config{}).Build().ListenUDP(context.Background(), "udp4", "0.0.0.0:0")
+		conn, err := (&gonnect.NativeConfig{}).Build().ListenUDP(context.Background(), "udp4", "0.0.0.0:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -287,7 +287,7 @@ func Test_listenConfig(t *testing.T) {
 		}
 	})
 	t.Run("IPv6", func(t *testing.T) {
-		conn, err := (&native.Config{}).Build().ListenUDPConfig(context.Background(), listenConfig(), "udp6", "[::]:0")
+		conn, err := (&gonnect.NativeConfig{}).Build().ListenUDPConfig(context.Background(), listenConfig(), "udp6", "[::]:0")
 		if err != nil {
 			t.Fatal(err)
 		}
