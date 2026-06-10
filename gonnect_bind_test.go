@@ -113,19 +113,19 @@ func TestWinRingCloserSubscriberRequiresNativeSubscribeCloser(t *testing.T) {
 		t.Fatal("native network without SubscribeCloser was accepted")
 	}
 
-	detachedNative := gonnect.DetachNetwork(nativeNetwork)
+	detachedNative := gonnect.DetachNetwork(nativeNetwork, nil)
 	if _, ok := winRingCloserSubscriber(detachedNative); !ok {
 		t.Fatal("detached native network was rejected")
 	}
 
-	detachedLoopback := gonnect.DetachNetwork(gonnect.NewLoopbackNetwok())
+	detachedLoopback := gonnect.DetachNetwork(gonnect.NewLoopbackNetwok(), nil)
 	if _, ok := winRingCloserSubscriber(detachedLoopback); ok {
 		t.Fatal("detached non-native network was accepted")
 	}
 }
 
 func TestNativeNetworkDownClosesStdNetBind(t *testing.T) {
-	network := gonnect.DetachNetwork((&gonnect.NativeConfig{}).Build())
+	network := gonnect.DetachNetwork((&gonnect.NativeConfig{}).Build(), nil)
 	bind := NewStdNetBind(network).(*StdNetBind)
 
 	fns, _, err := bind.Open(0)
