@@ -1,7 +1,7 @@
 github.com/asciimoth/bufpool v0.3.0 h1:tQMop/kZ3eOLSorM9i0cqtOIpxWQUroGZ6oNk5DTnQc=
 github.com/asciimoth/bufpool v0.3.0/go.mod h1:JV6H4hpj2bCS5Svr0wNqR+XOZFOOkdXfNZxCjm/3QHw=
-github.com/asciimoth/gonnect v0.27.0 h1:s4swJiVO00ezTDZud9d8dBPa/BeQgrt4wXmZBj4J8+Q=
-github.com/asciimoth/gonnect v0.27.0/go.mod h1:CohhruGEkUgKLF0ypR/RNFrdrqmJgUkKhvjMilED9Kk=
+github.com/asciimoth/gonnect v0.28.0 h1:EUaVgMN049Tt2il9PfM6EEcaBmVQ73UiTHLP+SaxFlM=
+github.com/asciimoth/gonnect v0.28.0/go.mod h1:CohhruGEkUgKLF0ypR/RNFrdrqmJgUkKhvjMilED9Kk=
 golang.org/x/net v0.54.0 h1:2zJIZAxAHV/OHCDTCOHAYehQzLfSXuf/5SoL/Dv6w/w=
 golang.org/x/net v0.54.0/go.mod h1:Sj4oj8jK6XmHpBZU/zWHw3BV3abl4Kvi+Ut7cQcY+cQ=
 golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
