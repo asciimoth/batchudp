@@ -222,7 +222,7 @@ func runScenario(cfg config, sc scenario) error {
 	if err != nil {
 		return err
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	group := newTaskGroup(ctx)
 	for sessionID := 0; sessionID < cfg.sessions; sessionID++ {
@@ -247,8 +247,8 @@ func runSession(
 	if err != nil {
 		return err
 	}
-	defer clientBind.Close()
-	defer serverBind.Close()
+	defer func() { _ = clientBind.Close() }()
+	defer func() { _ = serverBind.Close() }()
 
 	serverFuncs, serverPort, err := serverBind.Open(0)
 	if err != nil {

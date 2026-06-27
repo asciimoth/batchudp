@@ -115,11 +115,12 @@ func (c *ChannelBind) Send(bufs [][]byte, ep budp.Endpoint) error {
 		default:
 			bc := make([]byte, len(b))
 			copy(bc, b)
-			if ep.(ChannelEndpoint) == c.target4 {
+			switch ep := ep.(ChannelEndpoint); ep {
+			case c.target4:
 				*c.tx4 <- bc
-			} else if ep.(ChannelEndpoint) == c.target6 {
+			case c.target6:
 				*c.tx6 <- bc
-			} else {
+			default:
 				return os.ErrInvalid
 			}
 		}

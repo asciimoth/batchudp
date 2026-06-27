@@ -4,6 +4,9 @@ Differences from the [wireguard-go/conn](https://github.com/WireGuard/wireguard-
 - `NewStdNetBind` and `NewDefaultBind` take an explicit `gonnect.Network`.
 - `StdNetBind` opens sockets through the supplied `gonnect.Network` instead of
   calling the standard library listen APIs directly.
+- Added `StdNetBindOptions`, `NewStdNetBindWithOptions`, and
+  `NewDefaultBindWithOptions` so callers can prefer IPv6 first or opt into
+  single-family fallback when a sibling UDP family cannot be opened.
 - Linux batch I/O, sticky ancillary data, socket marks, and similar raw-socket
   features are now capability-gated so wrapped or virtual gonnect UDP
   connections can fall back to ordinary `ReadMsgUDP` /

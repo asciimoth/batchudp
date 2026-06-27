@@ -33,6 +33,7 @@ var (
 type StdNetBind struct {
 	mu            sync.Mutex // protects all fields except as specified
 	network       gonnect.Network
+	options       StdNetBindOptions
 	ipv4          gonnect.UDPConn
 	ipv6          gonnect.UDPConn
 	ipv4PC        batchReadWriter // will be nil when batch I/O is unavailable
@@ -51,13 +52,41 @@ type StdNetBind struct {
 	batchSize  int
 }
 
+// FamilyOrder selects which UDP address family StdNetBind.Open tries first.
+type FamilyOrder int
+
+const (
+	// FamilyOrderIPv4First opens udp4 before udp6. This is the default.
+	FamilyOrderIPv4First FamilyOrder = iota
+	// FamilyOrderIPv6First opens udp6 before udp4.
+	FamilyOrderIPv6First
+)
+
+// StdNetBindOptions controls StdNetBind socket opening behavior.
+type StdNetBindOptions struct {
+	// FamilyOrder selects the address family attempted first.
+	FamilyOrder FamilyOrder
+	// AllowSingleFamily lets Open succeed when the preferred family opens but
+	// the sibling family fails. Sending to an unopened family returns
+	// syscall.EAFNOSUPPORT.
+	AllowSingleFamily bool
+	// OnFamilyOpenError is called when AllowSingleFamily keeps a preferred
+	// family open after the sibling family fails.
+	OnFamilyOpenError func(network string, err error)
+}
+
 func NewStdNetBind(network gonnect.Network) Bind {
+	return NewStdNetBindWithOptions(network, StdNetBindOptions{})
+}
+
+func NewStdNetBindWithOptions(network gonnect.Network, opts StdNetBindOptions) Bind {
 	batchSize := 1
 	if network != nil && network.IsNative() && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
 		batchSize = IdealBatchSize
 	}
 	return &StdNetBind{
 		network:   network,
+		options:   opts,
 		batchSize: batchSize,
 		udpAddrPool: sync.Pool{
 			New: func() any {
@@ -80,6 +109,13 @@ func NewStdNetBind(network gonnect.Network) Bind {
 			},
 		},
 	}
+}
+
+func (s *StdNetBind) familyOrder() [2]string {
+	if s.options.FamilyOrder == FamilyOrderIPv6First {
+		return [2]string{"udp6", "udp4"}
+	}
+	return [2]string{"udp4", "udp6"}
 }
 
 type StdNetEndpoint struct {
@@ -114,18 +150,18 @@ func (e *StdNetEndpoint) ClearSrc() {
 }
 
 func (e *StdNetEndpoint) DstIP() netip.Addr {
-	return e.AddrPort.Addr()
+	return e.Addr()
 }
 
 // See control_default,linux, etc for implementations of SrcIP and SrcIfidx.
 
 func (e *StdNetEndpoint) DstToBytes() []byte {
-	b, _ := e.AddrPort.MarshalBinary()
+	b, _ := e.MarshalBinary()
 	return b
 }
 
 func (e *StdNetEndpoint) DstToString() string {
-	return e.AddrPort.String()
+	return e.String()
 }
 
 func listenAddress(network string, port int) string {
@@ -173,9 +209,15 @@ func (s *StdNetBind) listenNet(network string, port int) (gonnect.UDPConn, int, 
 
 func (s *StdNetBind) Open(uport uint16) ([]ReceiveFunc, uint16, error) {
 	s.mu.Lock()
+	var familyOpenErrorNetwork string
+	var familyOpenError error
+	defer func() {
+		if familyOpenError != nil && s.options.OnFamilyOpenError != nil {
+			s.options.OnFamilyOpenError(familyOpenErrorNetwork, familyOpenError)
+		}
+	}()
 	defer s.mu.Unlock()
 
-	var err error
 	var tries int
 
 	if s.ipv4 != nil || s.ipv6 != nil {
@@ -186,31 +228,54 @@ func (s *StdNetBind) Open(uport uint16) ([]ReceiveFunc, uint16, error) {
 	// If uport is 0, we can retry on failure.
 again:
 	port := int(uport)
-	var v4conn, v6conn gonnect.UDPConn
-	var v4pc, v6pc batchReadWriter
+	order := s.familyOrder()
+	firstNetwork, secondNetwork := order[0], order[1]
 
-	v4conn, port, err = s.listenNet("udp4", port)
-	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
-		return nil, 0, err
+	firstConn, actualPort, firstErr := s.listenNet(firstNetwork, port)
+	if firstErr != nil {
+		if !errors.Is(firstErr, syscall.EAFNOSUPPORT) {
+			return nil, 0, firstErr
+		}
+		actualPort = port
+	} else {
+		port = actualPort
 	}
 
-	// Listen on the same port as we're using for ipv4.
-	v6conn, port, err = s.listenNet("udp6", port)
-	if uport == 0 && errors.Is(err, syscall.EADDRINUSE) && tries < 100 {
-		if v4conn != nil {
-			_ = v4conn.Close()
+	// Listen on the same port as we're using for the first family.
+	secondConn, secondPort, secondErr := s.listenNet(secondNetwork, port)
+	if secondErr == nil {
+		if firstConn == nil {
+			actualPort = secondPort
 		}
+	} else if firstConn != nil && uport == 0 && !s.options.AllowSingleFamily && errors.Is(secondErr, syscall.EADDRINUSE) && tries < 100 {
+		_ = firstConn.Close()
 		tries++
 		goto again
-	}
-	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
-		if v4conn != nil {
-			_ = v4conn.Close()
+	} else if firstConn != nil && s.options.AllowSingleFamily {
+		familyOpenErrorNetwork = secondNetwork
+		familyOpenError = secondErr
+	} else if firstConn != nil && !errors.Is(secondErr, syscall.EAFNOSUPPORT) {
+		_ = firstConn.Close()
+		return nil, 0, secondErr
+	} else if firstConn == nil {
+		if !errors.Is(secondErr, syscall.EAFNOSUPPORT) {
+			return nil, 0, secondErr
 		}
-		return nil, 0, err
+		return nil, 0, syscall.EAFNOSUPPORT
 	}
+
+	var v4conn, v6conn gonnect.UDPConn
+	if firstNetwork == "udp4" {
+		v4conn = firstConn
+		v6conn = secondConn
+	} else {
+		v6conn = firstConn
+		v4conn = secondConn
+	}
+
 	var fns []ReceiveFunc
 	if v4conn != nil {
+		var v4pc batchReadWriter
 		s.ipv4TxOffload, s.ipv4RxOffload = supportsUDPOffload(v4conn)
 		if nativeConn := unwrapUDPConn(v4conn); nativeConn != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
 			v4pc = ipv4.NewPacketConn(nativeConn)
@@ -220,6 +285,7 @@ again:
 		s.ipv4 = v4conn
 	}
 	if v6conn != nil {
+		var v6pc batchReadWriter
 		s.ipv6TxOffload, s.ipv6RxOffload = supportsUDPOffload(v6conn)
 		if nativeConn := unwrapUDPConn(v6conn); nativeConn != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
 			v6pc = ipv6.NewPacketConn(nativeConn)
@@ -232,7 +298,7 @@ again:
 		return nil, 0, syscall.EAFNOSUPPORT
 	}
 
-	return fns, uint16(port), nil
+	return fns, uint16(actualPort), nil
 }
 
 func (s *StdNetBind) putMessages(msgs *[]ipv6.Message) {
@@ -286,7 +352,7 @@ func (s *StdNetBind) receiveIP(
 	if br != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
 		if rxOffload {
 			readAt := len(*msgs) - (IdealBatchSize / udpSegmentMaxDatagrams)
-			numMsgs, err = br.ReadBatch((*msgs)[readAt:], 0)
+			_, err = br.ReadBatch((*msgs)[readAt:], 0)
 			if err != nil {
 				return 0, err
 			}

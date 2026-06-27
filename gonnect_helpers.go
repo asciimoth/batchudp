@@ -24,11 +24,3 @@ func unwrapUDPConn(conn gonnect.UDPConn) *net.UDPConn {
 	udp, _ := unwrapValue(conn).(*net.UDPConn)
 	return udp
 }
-
-func unwrapNativeNetwork(network gonnect.Network) *gonnect.NativeNetwork {
-	if network == nil {
-		return nil
-	}
-	native, _ := unwrapValue(network).(*gonnect.NativeNetwork)
-	return native
-}

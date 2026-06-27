@@ -72,6 +72,9 @@ similar, so send/receive code usually moves over with little change.
 The main differences are:
 
 - `NewDefaultBind` and `NewStdNetBind` require a `gonnect.Network`.
+- `NewStdNetBindWithOptions` and `NewDefaultBindWithOptions` let callers opt
+  into IPv6-first opens or single-family fallback for networks that cannot
+  expose both UDP families.
 - Network lifecycle is explicit. When using `gonnect/native`, call
   `network.Down()` when the network should be torn down.
 - If you start from an existing `gonnect.PacketConn` on Linux, use
@@ -95,4 +98,3 @@ If your old code only depended on the `Bind` interface after construction, the
 rest of the call sites should usually keep the same structure:
 `Open`, `ParseEndpoint`, `Send`, `BatchSize`, and the returned `ReceiveFunc`
 values all work the same way.
-

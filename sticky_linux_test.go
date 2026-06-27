@@ -262,7 +262,11 @@ func Test_listenConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
+		defer func() {
+			if err := conn.Close(); err != nil {
+				t.Errorf("Close() error = %v", err)
+			}
+		}()
 		if err := configureSocket(conn, "udp4", "0.0.0.0:0"); err != nil {
 			t.Fatal(err)
 		}
@@ -273,9 +277,11 @@ func Test_listenConfig(t *testing.T) {
 
 		if runtime.GOOS == "linux" {
 			var i int
-			sc.Control(func(fd uintptr) {
+			if err := sc.Control(func(fd uintptr) {
 				i, err = unix.GetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_PKTINFO)
-			})
+			}); err != nil {
+				t.Fatal(err)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -291,7 +297,11 @@ func Test_listenConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
+		defer func() {
+			if err := conn.Close(); err != nil {
+				t.Errorf("Close() error = %v", err)
+			}
+		}()
 		if err := configureSocket(conn, "udp6", "[::]:0"); err != nil {
 			t.Fatal(err)
 		}
@@ -302,9 +312,11 @@ func Test_listenConfig(t *testing.T) {
 
 		if runtime.GOOS == "linux" {
 			var i int
-			sc.Control(func(fd uintptr) {
+			if err := sc.Control(func(fd uintptr) {
 				i, err = unix.GetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVPKTINFO)
-			})
+			}); err != nil {
+				t.Fatal(err)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

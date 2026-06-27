@@ -36,6 +36,8 @@ The batching-conn upgrade is implemented separately:
 - `bind_windows.go`: Windows uses `NewWinRingBind(network)` only when the
   supplied network is native and also exposes `SubscribeCloser(io.Closer)`;
   otherwise it uses `StdNetBind(network)`.
+- `NewDefaultBindWithOptions` applies `StdNetBindOptions`; on Windows it keeps
+  the RIO path only for the zero-option case and otherwise uses `StdNetBind`.
 
 ## Main Data Flow
 
@@ -69,11 +71,18 @@ For `StdNetBind`:
 4. After open, `configureSocket()` applies the platform-specific post-open
    control hooks such as buffer sizing, PKTINFO reception, and optional
    `UDP_GRO`.
-5. `Open` creates one IPv4 socket and one IPv6 socket on the same port, probes
-   UDP offload support via `supportsUDPOffload`, and on Linux/Android wraps the
-   unwrapped underlying `*net.UDPConn` in `ipv4.PacketConn` or `ipv6.PacketConn`
-   only when native batch I/O is actually available.
-6. `Open` returns one receive closure per active family:
+5. By default `Open` tries IPv4 first and then IPv6 on the first socket's
+   actual port. `StdNetBindOptions.FamilyOrder` can prefer IPv6 first.
+6. Strict mode preserves the dual-family behavior: non-`EAFNOSUPPORT` sibling
+   failures close the first socket and fail `Open`. When
+   `AllowSingleFamily` is set, `Open` keeps the first family if the sibling
+   fails, calls `OnFamilyOpenError` when configured, and returns one receive
+   function. Sending to the unopened family returns `syscall.EAFNOSUPPORT`.
+7. For each opened socket, `Open` probes UDP offload support via
+   `supportsUDPOffload`, and on Linux/Android wraps the unwrapped underlying
+   `*net.UDPConn` in `ipv4.PacketConn` or `ipv6.PacketConn` only when native
+   batch I/O is actually available.
+8. `Open` returns one receive closure per active family:
    `makeReceiveIPv4` and `makeReceiveIPv6`, both of which call `receiveIP`.
 
 For `WinRingBind`:

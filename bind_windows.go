@@ -88,6 +88,13 @@ func NewDefaultBind(network gonnect.Network) Bind {
 	return NewWinRingBind(network)
 }
 
+func NewDefaultBindWithOptions(network gonnect.Network, opts StdNetBindOptions) Bind {
+	if opts.FamilyOrder != FamilyOrderIPv4First || opts.AllowSingleFamily || opts.OnFamilyOpenError != nil {
+		return NewStdNetBindWithOptions(network, opts)
+	}
+	return NewDefaultBind(network)
+}
+
 func NewWinRingBind(network gonnect.Network) Bind {
 	subscriber, ok := winRingCloserSubscriber(network)
 	if !ok {

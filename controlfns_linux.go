@@ -67,16 +67,20 @@ func init() {
 			switch network {
 			case "udp4":
 				if runtime.GOOS != "android" {
-					c.Control(func(fd uintptr) {
+					if controlErr := c.Control(func(fd uintptr) {
 						err = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_PKTINFO, 1)
-					})
+					}); controlErr != nil {
+						return controlErr
+					}
 				}
 			case "udp6":
-				c.Control(func(fd uintptr) {
+				if controlErr := c.Control(func(fd uintptr) {
 					if runtime.GOOS != "android" {
 						err = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVPKTINFO, 1)
 					}
-				})
+				}); controlErr != nil {
+					return controlErr
+				}
 			default:
 				err = fmt.Errorf("unhandled network: %s: %w", network, unix.EINVAL)
 			}
@@ -96,10 +100,9 @@ func init() {
 				return nil
 			}
 
-			c.Control(func(fd uintptr) {
+			return c.Control(func(fd uintptr) {
 				_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_UDP, unix.UDP_GRO, 1)
 			})
-			return nil
 		},
 	)
 
@@ -108,9 +111,11 @@ func init() {
 			return nil
 		}
 		var err error
-		c.Control(func(fd uintptr) {
+		if controlErr := c.Control(func(fd uintptr) {
 			err = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 1)
-		})
+		}); controlErr != nil {
+			return controlErr
+		}
 		return err
 	})
 }
