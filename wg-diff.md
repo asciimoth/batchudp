@@ -7,6 +7,10 @@ Differences from the [wireguard-go/conn](https://github.com/WireGuard/wireguard-
 - Added `StdNetBindOptions`, `NewStdNetBindWithOptions`, and
   `NewDefaultBindWithOptions` so callers can prefer IPv6 first or opt into
   single-family fallback when a sibling UDP family cannot be opened.
+- Added `StdNetBindOptions.BatchSize` so callers can override `StdNetBind`'s
+  effective batch size. Positive values drive `BatchSize()`, receive
+  validation, native batch read/write slice lengths, and pooled message
+  allocation; non-positive values preserve existing defaults.
 - Linux batch I/O, sticky ancillary data, socket marks, and similar raw-socket
   features are now capability-gated so wrapped or virtual gonnect UDP
   connections can fall back to ordinary `ReadMsgUDP` /

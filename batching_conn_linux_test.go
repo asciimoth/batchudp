@@ -28,6 +28,28 @@ func TestTryUpgradeToBatchingConnUpgradesNativeUDPConn(t *testing.T) {
 	}
 }
 
+func TestTryUpgradeToBatchingConnDefaultBatchSize(t *testing.T) {
+	udpConn := listenUDP4(t)
+
+	bc := TryUpgradeToBatchingConn(udpConn, "udp4", 0).(BatchingConn)
+	if got := bc.BatchSize(); got != IdealBatchSize {
+		t.Fatalf("BatchSize() = %d, want %d", got, IdealBatchSize)
+	}
+}
+
+func TestTryUpgradeToBatchingConnSendPoolUsesConfiguredBatchSize(t *testing.T) {
+	const batchSize = 4
+
+	udpConn := listenUDP4(t)
+	bc := TryUpgradeToBatchingConn(udpConn, "udp4", batchSize).(*linuxBatchingConn)
+
+	batch := bc.getSendBatch()
+	defer bc.putSendBatch(batch)
+	if got := len(batch.msgs); got != batchSize {
+		t.Fatalf("len(send batch msgs) = %d, want %d", got, batchSize)
+	}
+}
+
 func TestBatchingConnReadBatchAndWriteBatchTo(t *testing.T) {
 	serverUDP := listenUDP4(t)
 	clientUDP := listenUDP4(t)

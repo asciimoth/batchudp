@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"runtime"
 	"testing"
 
 	"github.com/asciimoth/gonnect"
@@ -43,6 +44,62 @@ func TestStdNetBindReceiveFuncShortBufferList(t *testing.T) {
 	bufs := make([][]byte, shortLen)
 	sizes := make([]int, shortLen)
 	eps := make([]Endpoint, shortLen)
+	for _, fn := range fns {
+		n, err := fn(bufs, sizes, eps)
+		if !errors.Is(err, ErrReadBufferTooShort) {
+			t.Fatalf("ReceiveFunc err = %v, want %v", err, ErrReadBufferTooShort)
+		}
+		if n != 0 {
+			t.Fatalf("ReceiveFunc n = %d, want 0", n)
+		}
+	}
+}
+
+func TestStdNetBindZeroOptionsBatchSizeDefault(t *testing.T) {
+	network := (&gonnect.NativeConfig{}).Build()
+	bind := NewStdNetBindWithOptions(network, StdNetBindOptions{}).(*StdNetBind)
+
+	want := 1
+	if network.IsNative() && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
+		want = IdealBatchSize
+	}
+	if got := bind.BatchSize(); got != want {
+		t.Fatalf("BatchSize() = %d, want %d", got, want)
+	}
+}
+
+func TestStdNetBindOptionsBatchSize(t *testing.T) {
+	const batchSize = 3
+
+	bind := NewStdNetBindWithOptions((&gonnect.NativeConfig{}).Build(), StdNetBindOptions{
+		BatchSize: batchSize,
+	}).(*StdNetBind)
+	if got := bind.BatchSize(); got != batchSize {
+		t.Fatalf("BatchSize() = %d, want %d", got, batchSize)
+	}
+
+	msgs := bind.getMessages()
+	defer bind.putMessages(msgs)
+	if got := len(*msgs); got != batchSize {
+		t.Fatalf("len(getMessages()) = %d, want %d", got, batchSize)
+	}
+}
+
+func TestStdNetBindReceiveValidationUsesConfiguredBatchSize(t *testing.T) {
+	const batchSize = 3
+
+	bind := NewStdNetBindWithOptions((&gonnect.NativeConfig{}).Build(), StdNetBindOptions{
+		BatchSize: batchSize,
+	}).(*StdNetBind)
+	fns, _, err := bind.Open(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bind.Close()
+
+	bufs := make([][]byte, batchSize-1)
+	sizes := make([]int, batchSize-1)
+	eps := make([]Endpoint, batchSize-1)
 	for _, fn := range fns {
 		n, err := fn(bufs, sizes, eps)
 		if !errors.Is(err, ErrReadBufferTooShort) {

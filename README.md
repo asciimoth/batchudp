@@ -73,8 +73,11 @@ The main differences are:
 
 - `NewDefaultBind` and `NewStdNetBind` require a `gonnect.Network`.
 - `NewStdNetBindWithOptions` and `NewDefaultBindWithOptions` let callers opt
-  into IPv6-first opens or single-family fallback for networks that cannot
-  expose both UDP families.
+  into IPv6-first opens, single-family fallback for networks that cannot
+  expose both UDP families, or an explicit positive
+  `StdNetBindOptions.BatchSize`.
+  Smaller batches reduce retained per-bind message allocation, while larger
+  batches can improve throughput under load by reducing syscall overhead.
 - Network lifecycle is explicit. When using `gonnect/native`, call
   `network.Down()` when the network should be torn down.
 - If you start from an existing `gonnect.PacketConn` on Linux, use

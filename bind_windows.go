@@ -89,7 +89,7 @@ func NewDefaultBind(network gonnect.Network) Bind {
 }
 
 func NewDefaultBindWithOptions(network gonnect.Network, opts StdNetBindOptions) Bind {
-	if opts.FamilyOrder != FamilyOrderIPv4First || opts.AllowSingleFamily || opts.OnFamilyOpenError != nil {
+	if opts.FamilyOrder != FamilyOrderIPv4First || opts.AllowSingleFamily || opts.OnFamilyOpenError != nil || opts.BatchSize > 0 {
 		return NewStdNetBindWithOptions(network, opts)
 	}
 	return NewDefaultBind(network)

@@ -73,6 +73,12 @@ type StdNetBindOptions struct {
 	// OnFamilyOpenError is called when AllowSingleFamily keeps a preferred
 	// family open after the sibling family fails.
 	OnFamilyOpenError func(network string, err error)
+	// BatchSize overrides the effective bind batch size when positive.
+	// Non-positive values preserve the platform default: IdealBatchSize for
+	// native Linux/Android binds and 1 elsewhere. Smaller batches reduce
+	// retained per-bind message allocation; larger batches can improve
+	// throughput under load by amortizing syscall overhead.
+	BatchSize int
 }
 
 func NewStdNetBind(network gonnect.Network) Bind {
@@ -80,10 +86,7 @@ func NewStdNetBind(network gonnect.Network) Bind {
 }
 
 func NewStdNetBindWithOptions(network gonnect.Network, opts StdNetBindOptions) Bind {
-	batchSize := 1
-	if network != nil && network.IsNative() && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
-		batchSize = IdealBatchSize
-	}
+	batchSize := stdNetBindBatchSize(network, opts)
 	return &StdNetBind{
 		network:   network,
 		options:   opts,
@@ -100,7 +103,7 @@ func NewStdNetBindWithOptions(network gonnect.Network, opts StdNetBindOptions) B
 			New: func() any {
 				// ipv6.Message and ipv4.Message are interchangeable as they are
 				// both aliases for x/net/internal/socket.Message.
-				msgs := make([]ipv6.Message, IdealBatchSize)
+				msgs := make([]ipv6.Message, batchSize)
 				for i := range msgs {
 					msgs[i].Buffers = make(net.Buffers, 1)
 					msgs[i].OOB = make([]byte, 0, stickyControlSize+gsoControlSize)
@@ -109,6 +112,16 @@ func NewStdNetBindWithOptions(network gonnect.Network, opts StdNetBindOptions) B
 			},
 		},
 	}
+}
+
+func stdNetBindBatchSize(network gonnect.Network, opts StdNetBindOptions) int {
+	if opts.BatchSize > 0 {
+		return opts.BatchSize
+	}
+	if network != nil && network.IsNative() && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
+		return IdealBatchSize
+	}
+	return 1
 }
 
 func (s *StdNetBind) familyOrder() [2]string {
@@ -343,15 +356,15 @@ func (s *StdNetBind) receiveIP(
 		return 0, err
 	}
 	msgs := s.getMessages()
-	for i := range bufs {
+	for i := range *msgs {
 		(*msgs)[i].Buffers[0] = bufs[i]
 		(*msgs)[i].OOB = (*msgs)[i].OOB[:cap((*msgs)[i].OOB)]
 	}
 	defer s.putMessages(msgs)
 	var numMsgs int
 	if br != nil && (runtime.GOOS == "linux" || runtime.GOOS == "android") {
-		if rxOffload {
-			readAt := len(*msgs) - (IdealBatchSize / udpSegmentMaxDatagrams)
+		if rxOffload && len(*msgs) > 1 {
+			readAt := len(*msgs) - groReadBatchSize(len(*msgs))
 			_, err = br.ReadBatch((*msgs)[readAt:], 0)
 			if err != nil {
 				return 0, err
@@ -387,6 +400,17 @@ func (s *StdNetBind) receiveIP(
 		eps[i] = ep
 	}
 	return numMsgs, nil
+}
+
+func groReadBatchSize(batchSize int) int {
+	n := (batchSize + udpSegmentMaxDatagrams - 1) / udpSegmentMaxDatagrams
+	if n < 1 {
+		return 1
+	}
+	if n > batchSize {
+		return batchSize
+	}
+	return n
 }
 
 func (s *StdNetBind) makeReceiveIPv4(pc batchReader, conn gonnect.UDPConn, rxOffload bool) ReceiveFunc {

@@ -38,6 +38,8 @@ The batching-conn upgrade is implemented separately:
   otherwise it uses `StdNetBind(network)`.
 - `NewDefaultBindWithOptions` applies `StdNetBindOptions`; on Windows it keeps
   the RIO path only for the zero-option case and otherwise uses `StdNetBind`.
+  Setting a positive `StdNetBindOptions.BatchSize` is therefore also a request
+  for the `StdNetBind` path.
 
 ## Main Data Flow
 
@@ -46,7 +48,9 @@ The batching-conn upgrade is implemented separately:
 `TryUpgradeToBatchingConn` is the entry point for the socket-upgrade path.
 
 1. It accepts a `gonnect.PacketConn`, a UDP network string (`udp4` or `udp6`),
-   and a desired batch size.
+   and a desired batch size. A non-positive batch size preserves the native
+   default of `IdealBatchSize`; a positive value is used for both reported
+   capacity and pooled send-message allocation.
 2. On Linux, it upgrades only values that also implement `gonnect.UDPConn` and
    unwrap to a native `*net.UDPConn`.
 3. The upgraded wrapper keeps the original `gonnect.UDPConn` for ordinary UDP
@@ -73,6 +77,11 @@ For `StdNetBind`:
    `UDP_GRO`.
 5. By default `Open` tries IPv4 first and then IPv6 on the first socket's
    actual port. `StdNetBindOptions.FamilyOrder` can prefer IPv6 first.
+   Positive `StdNetBindOptions.BatchSize` values override the bind's effective
+   batch size; non-positive values preserve `IdealBatchSize` for native
+   Linux/Android binds and `1` elsewhere. Smaller batches reduce retained
+   per-bind message allocation, while larger batches can improve throughput
+   under load by reducing syscall overhead.
 6. Strict mode preserves the dual-family behavior: non-`EAFNOSUPPORT` sibling
    failures close the first socket and fail `Open`. When
    `AllowSingleFamily` is set, `Open` keeps the first family if the sibling
@@ -116,6 +125,9 @@ For `StdNetBind`, the receive path lives in `receiveIP` in`bind_std.go`:
 - Callers must pass `packets`, `sizes`, and `eps` slices whose lengths are at
   least `BatchSize()`. Shorter slice lists are rejected with
   `ErrReadBufferTooShort`.
+- `StdNetBind` allocates pooled message slices with exactly `BatchSize()`
+  entries and passes that configured length to native `ReadBatch`, even when a
+  caller supplies longer receive slices.
 - Linux and Android use `ReadBatch` through `ipv4.PacketConn` / `ipv6.PacketConn`
   only when the opened connection unwraps to a suitable native `*net.UDPConn`.
 - Otherwise `gonnect.UDPConn.ReadMsgUDP` is used and packets are processed one
@@ -132,7 +144,8 @@ When Linux/Android RX offload is enabled:
   `features_linux.go` checks whether the socket actually supports `UDP_GRO` and `UDP_SEGMENT`.
 - `receiveIP` reads into a reduced number of large buffers, then
   `splitCoalescedMessages` expands a coalesced GRO datagram back into the
-  packet-per-buffer API expected by callers.
+  packet-per-buffer API expected by callers. The reduced read window is derived
+  from the configured batch size rather than from `IdealBatchSize`.
 - `getGSOSize` from `gso_linux.go` extracts the segment size from ancillary
   data. Non-Linux builds use `gso_default.go`, where these helpers are no-ops.
 

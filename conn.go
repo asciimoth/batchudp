@@ -82,7 +82,8 @@ type Bind interface {
 	// BatchSize is the number of buffers expected to be passed to
 	// the ReceiveFuncs, and the maximum expected to be passed to Send.
 	//
-	// StdNetBind returns IdealBatchSize on Linux and Android and 1 elsewhere.
+	// StdNetBind returns IdealBatchSize for native Linux/Android binds and 1
+	// elsewhere unless StdNetBindOptions.BatchSize overrides the default.
 	// WinRingBind currently returns 1.
 	BatchSize() int
 }
