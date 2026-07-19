@@ -9,5 +9,5 @@ require (
 
 require (
 	github.com/asciimoth/bufpool v0.3.0 // indirect
-	github.com/asciimoth/gonnect v0.32.0
+	github.com/asciimoth/gonnect v0.33.0
 )
