@@ -133,7 +133,7 @@ var scenarios = []scenario{
 	{
 		name: "loopback",
 		factory: func() (pairFactory, error) {
-			network := gonnect.NewLoopbackNetwok()
+			network := gonnect.NewLoopbackNetwork()
 			return &sharedNetworkFactory{
 				newBind: func() conn.Bind { return conn.NewDefaultBind(network) },
 				close:   network.Down,
